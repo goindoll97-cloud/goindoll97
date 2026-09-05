@@ -1,0 +1,3 @@
+﻿case_id,rule_id,designation_id,chemical_name,cas,smiles,reference_membership,reference_source,reference_review_status,notes
+V001,RULE_EXAMPLE,DESIGNATION_EXAMPLE,Positive salt example,532-32-1,,MATCH,,RESEARCHER_CONFIRM_REQUIRED,SMILES is fetched from PubChem; membership and source must be confirmed before validation counting
+V002,RULE_EXAMPLE,DESIGNATION_EXAMPLE,Negative salt example,127-09-3,,NO_MATCH,,RESEARCHER_CONFIRM_REQUIRED,SMILES is fetched from PubChem; membership and source must be confirmed before validation counting

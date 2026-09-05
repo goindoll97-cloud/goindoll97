@@ -1,0 +1,2 @@
+﻿rule_id,designation_id,reference_parent_name,reference_parent_cas,reference_smiles,salt_scope,automation_status,isomer_scope,study_target,curation_status,source_verified,reference_rule_frozen,regulatory_source,chemical_identity_source,rule_version,frozen_date,notes
+RULE_EXAMPLE,DESIGNATION_EXAMPLE,Example parent,65-85-0,,all_counterion_salts,manual_review,,EXPANSION_12,RESEARCHER_CONFIRM_REQUIRED,0,0,,,,,CAS is sufficient for PubChem SMILES retrieval; confirm scope and sources before changing automation_status to auto

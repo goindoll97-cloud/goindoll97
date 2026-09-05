@@ -1,0 +1,7 @@
+material_id,chemical_name,cas,smiles,concentration_pct,product_name,department,use_description,annual_quantity_kg,as_of_date,authorization_status,operation_type
+MAT-001,Aniline hydrochloride,142-04-1,C1=CC=C(C=C1)N.Cl,1.0,Demo product A,R&D,시험·연구,25,2026-09-01,해당 없음,사용
+MAT-002,Nicotine bitartrate,6019-06-3,CN1CCC[C@H]1C2=CN=CC=C2.[C@@H]([C@H](C(=O)O)O)(C(=O)O)O.[C@@H]([C@H](C(=O)O)O)(C(=O)O)O.O.O,0.5,Demo product B,Production,제품 제조,120,2026-09-01,확인 중,사용
+MAT-003,Warfarin sodium,129-06-6,CC(=O)CC(C1=CC=CC=C1)C2=C(C3=CC=CC=C3OC2=O)[O-].[Na+],0.2,Demo product C,Quality,품질 시험,5,2026-09-01,해당 없음,사용
+MAT-004,Benzidine dihydrochloride,531-85-1,C1=CC(=CC=C1C2=CC=C(C=C2)N)N.Cl.Cl,0.1,Demo product D,R&D,시험·연구,2,2026-09-01,확인 중,사용
+MAT-005,Caffeine,58-08-2,CN1C=NC2=C1C(=O)N(C(=O)N2C)C,2.0,Demo product E,Production,제품 제조,500,2026-09-01,해당 없음,사용
+MAT-006,Unknown CAS example,000-00-0,,1.0,Demo product F,Quality,,,,,

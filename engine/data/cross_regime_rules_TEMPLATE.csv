@@ -1,0 +1,5 @@
+regime,rule_id,designation_id,substance_name,scope_type,direct_cas,source_text,concentration_threshold_pct,concentration_operator,use_condition,quantity_threshold,quantity_unit,temporal_condition,authorization_condition,source_name,source_reference,source_locator,official_serial,official_issue_date,official_effective_date,approval_status,extraction_status
+ACCIDENT_PREPAREDNESS,,,,DIRECT_CAS,,,,,,,,,,사고대비물질의 지정,,,,,,DRAFT,MANUAL_CURATED
+RESTRICTED,,,,DIRECT_CAS,,,,,,,,,,제한물질·금지물질의 지정,,,,,,DRAFT,MANUAL_CURATED
+PROHIBITED,,,,DIRECT_CAS,,,,,,,,,,제한물질·금지물질의 지정,,,,,,DRAFT,MANUAL_CURATED
+AUTHORIZED,,,,DIRECT_CAS,,,,,,,,,,허가물질 지정 등에 관한 규정,,,,,,DRAFT,MANUAL_CURATED

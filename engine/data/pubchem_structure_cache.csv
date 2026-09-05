@@ -1,0 +1,2 @@
+﻿cas,structure_status,pubchem_cid,pubchem_title,pubchem_isomeric_smiles,pubchem_connectivity_smiles,pubchem_inchikey,pubchem_cas_verified,pubchem_retrieval_date,pubchem_record_url,pubchem_query_url,pubchem_error
+000-00-0,PUBCHEM_NOT_FOUND,,,,,,,2026-09-02,,"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/000-00-0/property/Title,CanonicalSMILES,IsomericSMILES,InChIKey/JSON",No PubChem compound was found for the CAS query
