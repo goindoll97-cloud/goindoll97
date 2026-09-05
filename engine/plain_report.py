@@ -88,6 +88,14 @@ def _fmt(value: Any) -> str:
     return f"{number:g}" if np.isfinite(number) else ""
 
 
+def _join_semi(raw: str, sep: str) -> str:
+    """Join a '; '-separated field with `sep`, without leaving the stray
+    space that a naive `.replace(';', sep)` leaves behind (e.g. turning
+    'A; B' into 'A /  B' instead of 'A / B')."""
+    parts = [p.strip() for p in clean(raw).split(";") if p.strip()]
+    return sep.join(dict.fromkeys(parts))
+
+
 def _match_phrase(row: pd.Series) -> str:
     """Describe, in plain Korean, why this material was tied to the listed entry."""
     match_type = clean(row.get("match_type"))
@@ -292,56 +300,22 @@ def build_plain_summary(
         sentences += cross_sentences
         citations += cross_citations
 
+        result = _plain_result(item.get("gate_decision"), item.get("final_decision"))
+
         cas = clean(item.get("input_cas"))
         searchable_cas = bool(cas and valid_cas_checksum(cas) and cas.replace("-", "").strip("0"))
         final_decision = clean(item.get("final_decision"))
         scope_candidates = clean(item.get("no_cas_scope_designation_ids"))
-        if confirmed.empty and searchable_cas:
-            if final_decision == "전문가 검토 필요" and held.empty:
-                # A complex-scope (anchor/contextual) hit that could not be
-                # auto-confirmed is NOT the same as a clean miss -- saying
-                # "no match found" here would misreport an open review as a
-                # settled negative.
-                if not scope_candidates:
-                    designation = clean(item.get("review_reason")) or clean(item.get("decision_reason"))
-                    sentences.append(
-                        f"「{clean(notice)}」 목록의 복합 규제범위와 관련되어 검토가 필요합니다. "
-                        f"({designation})" if designation
-                        else f"「{clean(notice)}」 목록의 복합 규제범위와 관련되어 검토가 필요합니다."
-                    )
-            elif final_decision != "전문가 검토 필요":
-                sentences.append(
-                    f"「{clean(notice)}」 인체급성·인체만성·생태유해성물질 목록에서 이 CAS번호와 "
-                    "일치하는 항목은 없었습니다."
-                )
-
-        if not held.empty:
-            names = "; ".join(
-                dict.fromkeys(
-                    clean(row.get("regulatory_substance_name")) for _, row in held.iterrows()
-                )
-            )
-            sentences.append(
-                f"구조 비교로는 '{names}'의 규제범위에 들어갈 수 있으나, 사용한 화학구조가 "
-                "PubChem의 정확한 CAS 동의어로 확인되지 않아 확정하지 않았습니다."
-            )
-
-        result = _plain_result(item.get("gate_decision"), item.get("final_decision"))
-        # The caveat is shown even on a positive result: a confirmed hit in one
-        # category says nothing about the categories that could not be searched.
-        hold_reason = _simplify_hold(item.get("gate_hold_reason"))
-        if hold_reason and not scope_candidates:
-            sentences.append(hold_reason)
-        coverage = clean(item.get("coverage_summary"))
-        if not hold_reason and coverage.startswith("자료 커버리지 미완"):
-            # A confirmed positive carries no hold text, but the categories that
-            # could not be searched still have to be stated.
-            sentences.append(_simplify_hold(coverage))
         ai_status = clean(item.get("llm_status"))
         ai_candidates = clean(item.get("llm_candidate_designation_ids"))
         rule_relation = clean(item.get("llm_rule_relation"))
         ai_explanation = clean(item.get("llm_explanation_ko"))
         ai_quotes = clean(item.get("llm_evidence_quotes"))
+        excluded_id = clean(item.get("no_cas_scope_excluded_designation_id"))
+        excluded_name = clean(item.get("no_cas_scope_excluded_regulatory_name"))
+        primary_id = clean(item.get("no_cas_scope_primary_designation_id"))
+        primary_name = clean(item.get("no_cas_scope_primary_regulatory_name"))
+        primary_category = clean(item.get("no_cas_scope_primary_category"))
         candidate_names = clean(item.get("no_cas_scope_regulatory_names"))
         candidate_categories = clean(item.get("no_cas_scope_regulatory_categories"))
         try:
@@ -359,35 +333,116 @@ def build_plain_summary(
             "INCLUDED_CANDIDATE": "총칭·구조범위 포함 후보",
             "INSUFFICIENT_INFORMATION": "관계 판단정보 부족",
         }.get(rule_relation, rule_relation)
-        candidate_ids = ai_candidates or scope_candidates
-        if candidate_ids:
-            category_text = candidate_categories.replace(";", "·") or "규제물질"
-            name_text = candidate_names.replace(";", "', '") or "복합 규제범위"
-            target = f"{category_text}의 '{name_text}'(지정번호 {candidate_ids})"
-            if rule_relation == "EXPLICITLY_EXCLUDED":
-                sentences.append(
-                    f"본 물질은 {target}의 명시적 제외물질입니다. 다른 규제 여부는 별도 확인이 필요합니다."
+        # An explicit exclusion condition (an isomer, salt, or CAS the notice
+        # itself names as excluded) settles the question, whether it was
+        # caught by the deterministic scope scan or by the AI's own reading
+        # of the notice text -- it always outranks a "may apply" reading of
+        # the same designation.
+        context_exclusion = next(
+            (e for e in candidate_context if isinstance(e, dict) and e.get("explicit_exception")),
+            None,
+        )
+        explicitly_excluded = (
+            bool(excluded_id) or rule_relation == "EXPLICITLY_EXCLUDED" or context_exclusion is not None
+        )
+
+        if result != "규제 해당":
+            # A confirmed result states only its confirmed basis (built
+            # above); everything below is candidate/hold reasoning that only
+            # applies while the material is still open.
+            if confirmed.empty and searchable_cas:
+                if final_decision == "전문가 검토 필요" and held.empty:
+                    # A complex-scope (anchor/contextual) hit that could not be
+                    # auto-confirmed is NOT the same as a clean miss -- saying
+                    # "no match found" here would misreport an open review as a
+                    # settled negative.
+                    if not scope_candidates and not explicitly_excluded:
+                        designation = clean(item.get("review_reason")) or clean(item.get("decision_reason"))
+                        sentences.append(
+                            f"「{clean(notice)}」 목록의 복합 규제범위와 관련되어 검토가 필요합니다. "
+                            f"({designation})" if designation
+                            else f"「{clean(notice)}」 목록의 복합 규제범위와 관련되어 검토가 필요합니다."
+                        )
+                elif final_decision != "전문가 검토 필요" and not explicitly_excluded:
+                    sentences.append(
+                        f"「{clean(notice)}」 인체급성·인체만성·생태유해성물질 목록에서 이 CAS번호와 "
+                        "일치하는 항목은 없었습니다."
+                    )
+
+            if not held.empty:
+                names = _join_semi(
+                    "; ".join(clean(row.get("regulatory_substance_name")) for _, row in held.iterrows()),
+                    "', '",
                 )
-            elif rule_relation == "COMPONENT_ONLY":
                 sentences.append(
-                    f"본 물질은 {target}의 구성성분과 일치하지만, 혼합물·반응생성물 자체인지는 "
-                    "확인되지 않았습니다. 전문가 검토가 필요합니다."
+                    f"구조 비교로는 '{names}'의 규제범위에 들어갈 수 있으나, 사용한 화학구조가 "
+                    "PubChem의 정확한 CAS 동의어로 확인되지 않아 확정하지 않았습니다."
                 )
-            elif rule_relation == "INCLUDED_CANDIDATE" or "SALT_FAMILY" in candidate_scope_types:
+
+            hold_reason = _simplify_hold(item.get("gate_hold_reason"))
+            if hold_reason and not scope_candidates and not explicitly_excluded:
+                sentences.append(hold_reason)
+            coverage = clean(item.get("coverage_summary"))
+            if not hold_reason and coverage.startswith("자료 커버리지 미완"):
+                sentences.append(_simplify_hold(coverage))
+
+            if explicitly_excluded:
+                # The exclusion condition is the whole story here -- it
+                # replaces any "may apply"/candidate wording rather than
+                # sitting alongside it.
+                excl_id = excluded_id or clean((context_exclusion or {}).get("designation_id"))
+                excl_name = excluded_name or clean((context_exclusion or {}).get("regulatory_name"))
+                label = f"'{excl_name}'(지정번호 {excl_id})" if excl_id else f"'{excl_name}'"
                 sentences.append(
-                    f"본 물질은 {target}에 해당될 가능성이 높습니다. 전문가 검토가 필요합니다."
+                    f"본 물질은 {label}에서 명시적으로 제외한다고 적힌 대상에 해당하여 "
+                    "이 지정규정의 규제범위에 포함되지 않습니다."
                 )
-            elif ai_status and ai_status != "VALIDATED_OUTPUT":
-                sentences.append(
-                    f"본 물질은 {target}과 관련될 가능성이 있습니다. AI 검토가 완료되지 않아 전문가 확인이 필요합니다."
-                )
+                if excl_id:
+                    citations.append(f"{clean(notice)} 지정번호 {excl_id} (명시적 제외)")
             else:
-                sentences.append(
-                    f"본 물질은 {target}과 관련될 가능성이 있습니다. 전문가 검토가 필요합니다."
-                )
-            citations.append(f"{clean(notice)} 지정번호 {candidate_ids} (검토 후보)")
+                # Show only the single most relevant candidate name -- not
+                # every name that matched somewhere in the same designation
+                # group, which is how an unrelated isomer's name ends up
+                # riding along with the one actually in question.
+                candidate_ids = primary_id or ai_candidates or scope_candidates
+                if candidate_ids:
+                    category_text = (
+                        _join_semi(primary_category, "·") or _join_semi(candidate_categories, "·") or "규제물질"
+                    )
+                    name_text = (
+                        primary_name
+                        or (candidate_names.split(";")[0].strip() if candidate_names else "")
+                        or "복합 규제범위"
+                    )
+                    target = f"{category_text}의 '{name_text}'(지정번호 {candidate_ids})"
+                    if rule_relation == "COMPONENT_ONLY":
+                        sentences.append(
+                            f"본 물질은 {target}의 구성성분과 일치하지만, 혼합물·반응생성물 자체인지는 "
+                            "확인되지 않았습니다. 전문가 검토가 필요합니다."
+                        )
+                    elif rule_relation == "INCLUDED_CANDIDATE" or "SALT_FAMILY" in candidate_scope_types:
+                        sentences.append(
+                            f"본 물질은 {target}에 해당될 가능성이 높습니다. 전문가 검토가 필요합니다."
+                        )
+                    elif ai_status and ai_status != "VALIDATED_OUTPUT":
+                        sentences.append(
+                            f"본 물질은 {target}과 관련될 가능성이 있습니다. AI 검토가 완료되지 않아 전문가 확인이 필요합니다."
+                        )
+                    else:
+                        sentences.append(
+                            f"본 물질은 {target}과 관련될 가능성이 있습니다. 전문가 검토가 필요합니다."
+                        )
+                    citations.append(f"{clean(notice)} 지정번호 {candidate_ids} (검토 후보)")
+
         if not sentences:
             sentences.append(clean(item.get("decision_reason")) or "판정 근거가 기록되지 않았습니다.")
+
+        # Keep the reason short and single-purpose: a confirmed result states
+        # its basis in at most two sentences; a hold or non-match states the
+        # single most relevant reason rather than every clause collected
+        # along the way.
+        sentences = list(dict.fromkeys(sentences))
+        sentences = sentences[:2] if result == "규제 해당" else sentences[:1]
 
         rows.append(
             {
@@ -398,10 +453,11 @@ def build_plain_summary(
                 "판정결과": result,
                 "규제 카테고리": (
                     " / ".join(dict.fromkeys(categories))
-                    or candidate_categories.replace(";", " / ")
+                    or _join_semi(primary_category, " / ")
+                    or _join_semi(candidate_categories, " / ")
                     or "해당 없음"
                 ),
-                "판단근거": " ".join(dict.fromkeys(sentences)),
+                "판단근거": " ".join(sentences),
                 "법적 근거": "; ".join(dict.fromkeys(citations)) or "-",
                 "구조범위 후보 지정번호": scope_candidates,
                 "AI 검토 상태": ai_status,
