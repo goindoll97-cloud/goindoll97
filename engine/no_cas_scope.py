@@ -37,7 +37,6 @@ def _clean(value: Any) -> str:
 def _tokens(value: Any) -> set[str]:
     words = re.findall(r"[a-z0-9가-힣]{3,}", _clean(value).lower())
     tokens = {CHEMICAL_TOKEN_ALIASES.get(w, w) for w in words if w not in STOP}
-    # 붙여 쓴 체계명(예: ethyltrimethyllead)에서도 규제 화합물군 핵심어를 보존한다.
     for word in words:
         for family in DISTINCTIVE_FAMILY_TOKENS:
             if word.endswith(family):
@@ -46,7 +45,6 @@ def _tokens(value: Any) -> set[str]:
 
 
 def build_no_cas_scope_index(master: pd.DataFrame, notice: str) -> pd.DataFrame:
-    """Create a deterministic index for approved rows lacking a direct CAS."""
     if master is None or master.empty:
         return pd.DataFrame()
     x = master[master["notice"].astype(str).eq(str(notice))].copy()
@@ -82,7 +80,7 @@ def build_no_cas_scope_index(master: pd.DataFrame, notice: str) -> pd.DataFrame:
 
 
 def screen_no_cas_scopes(inventory: pd.DataFrame, index: pd.DataFrame) -> pd.DataFrame:
-    """Return conservative candidates; never returns an automatic legal match."""
+    """Return conservative candidates, with explicit exclusions ranked first."""
     if inventory is None or inventory.empty or index is None or index.empty:
         return pd.DataFrame()
     out = []
@@ -109,33 +107,59 @@ def screen_no_cas_scopes(inventory: pd.DataFrame, index: pd.DataFrame) -> pd.Dat
             name_hit = (overlap >= 0.45 and (scope == "SALT_FAMILY" or matched_token_count >= 2)) or family_hit
             if not (exception_hit or component_hit or name_hit):
                 continue
+
             if exception_hit:
-                reason = "법규 범위의 명시적 제외 CAS 후보입니다. 포함으로 확정하지 말고 원문의 제외조건을 우선 확인해야 합니다."
+                reason = "법규의 명시적 제외조건과 CAS번호가 일치합니다. 제외조건을 포함 후보보다 우선 적용해야 합니다."
                 match = "EXPLICIT_EXCEPTION_CAS"
+                score = 1000.0
             elif component_hit and scope in {"REACTION_PRODUCT", "MIXTURE"}:
-                reason = "법규 원문 속 구성성분 CAS와 일치하나, 단일 성분과 규제 혼합물·반응생성물은 동일하지 않을 수 있습니다."
+                reason = "법규 원문 속 구성성분 CAS와 일치하나 규제 혼합물·반응생성물 자체인지 확인이 필요합니다."
                 match = "COMPONENT_CAS_CANDIDATE"
+                score = 500.0
             elif name_hit:
-                reason = "회사 물질명과 CAS 없는 총칭·염류·UVCB 규제명이 관련되어 제품 동일성 확인이 필요합니다."
+                reason = "회사 물질명과 CAS 없는 총칭·염류·UVCB 규제명이 관련되어 동일성 확인이 필요합니다."
                 match = "NAME_SCOPE_CANDIDATE"
+                score = float(overlap * 100.0 + matched_token_count)
             else:
                 reason = "CAS 없는 규제범위의 구성성분 후보입니다."
                 match = "SCOPE_CANDIDATE"
+                score = float(overlap * 100.0)
+
             out.append({
                 "material_id": material_id, "chemical_name": _clean(item.get("chemical_name")), "cas": cas,
                 "designation_id": rule.get("designation_id"), "notice": rule.get("notice"),
                 "regulatory_name": rule.get("regulatory_name"), "scope_type": scope,
                 "regulatory_categories": "; ".join(
-                    label
-                    for column, label in HAZARD_CATEGORY_LABELS.items()
-                    if _clean(rule.get(column))
+                    label for column, label in HAZARD_CATEGORY_LABELS.items() if _clean(rule.get(column))
                 ),
                 "candidate_match_type": match, "candidate_reason": reason,
                 "is_explicit_exception": exception_hit,
+                "candidate_score": score,
                 "source_text": rule.get("source_text"),
                 "candidate_status": "전문가 검토 필요(AI 자동확정 금지)",
             })
-    return pd.DataFrame(out).drop_duplicates(subset=["material_id", "designation_id", "candidate_match_type"])
+    if not out:
+        return pd.DataFrame()
+    return pd.DataFrame(out).drop_duplicates(subset=["material_id", "designation_id", "regulatory_name", "candidate_match_type"])
+
+
+def _candidate_sort_key(row: pd.Series) -> tuple:
+    explicit_rank = 0 if bool(row.get("is_explicit_exception")) else 1
+    match_rank = {
+        "EXPLICIT_EXCEPTION_CAS": 0,
+        "COMPONENT_CAS_CANDIDATE": 1,
+        "NAME_SCOPE_CANDIDATE": 2,
+        "SCOPE_CANDIDATE": 3,
+    }.get(_clean(row.get("candidate_match_type")), 9)
+    score = pd.to_numeric(pd.Series([row.get("candidate_score")]), errors="coerce").iloc[0]
+    score = float(score) if pd.notna(score) else 0.0
+    return (
+        explicit_rank,
+        match_rank,
+        -score,
+        _clean(row.get("designation_id")),
+        _clean(row.get("regulatory_name")),
+    )
 
 
 def attach_no_cas_candidates(summary: pd.DataFrame, candidates: pd.DataFrame) -> pd.DataFrame:
@@ -146,48 +170,74 @@ def attach_no_cas_candidates(summary: pd.DataFrame, candidates: pd.DataFrame) ->
     out["no_cas_scope_regulatory_names"] = ""
     out["no_cas_scope_regulatory_categories"] = ""
     out["no_cas_scope_candidate_context"] = "[]"
+    out["no_cas_scope_primary_designation_id"] = ""
+    out["no_cas_scope_primary_regulatory_name"] = ""
+    out["no_cas_scope_primary_category"] = ""
+    out["no_cas_scope_primary_match_type"] = ""
+    out["no_cas_scope_primary_explicit_exception"] = False
+
     if candidates is None or candidates.empty:
         return out
+
     for material_id, rows in candidates.groupby("material_id", sort=False):
         mask = out["material_id"].astype(str).eq(str(material_id))
         if not mask.any():
             continue
-        labels = "; ".join(f"{r.designation_id} {r.regulatory_name}" for r in rows.itertuples())
-        designation_ids = "; ".join(
-            dict.fromkeys(_clean(v) for v in rows["designation_id"] if _clean(v))
+
+        ranked = rows.copy()
+        ranked["_sort_key"] = ranked.apply(_candidate_sort_key, axis=1)
+        ranked = ranked.sort_values("_sort_key", kind="stable")
+        primary = ranked.iloc[0]
+
+        # Keep the full candidate set only in audit fields. Reader-facing output uses primary only.
+        labels = "; ".join(
+            dict.fromkeys(f"{_clean(r.designation_id)} {_clean(r.regulatory_name)}".strip() for r in ranked.itertuples())
         )
-        regulatory_names = "; ".join(
-            dict.fromkeys(_clean(v) for v in rows["regulatory_name"] if _clean(v))
-        )
+        designation_ids = "; ".join(dict.fromkeys(_clean(v) for v in ranked["designation_id"] if _clean(v)))
+        regulatory_names = "; ".join(dict.fromkeys(_clean(v) for v in ranked["regulatory_name"] if _clean(v)))
         regulatory_categories = "; ".join(
             dict.fromkeys(
                 category.strip()
-                for value in rows.get("regulatory_categories", pd.Series(dtype=str))
+                for value in ranked.get("regulatory_categories", pd.Series(dtype=str))
                 for category in _clean(value).split(";")
                 if category.strip()
             )
         )
+
         context = []
-        for r in rows.itertuples():
+        for r in ranked.itertuples():
             context.append({
                 "designation_id": _clean(getattr(r, "designation_id", "")),
                 "regulatory_name": _clean(getattr(r, "regulatory_name", "")),
+                "regulatory_categories": _clean(getattr(r, "regulatory_categories", "")),
                 "scope_type": _clean(getattr(r, "scope_type", "")),
                 "match_type": _clean(getattr(r, "candidate_match_type", "")),
                 "explicit_exception": bool(getattr(r, "is_explicit_exception", False)),
+                "candidate_score": getattr(r, "candidate_score", 0.0),
                 "reason": _clean(getattr(r, "candidate_reason", "")),
             })
-        sources = "\n---\n".join(dict.fromkeys(_clean(v) for v in rows["source_text"] if _clean(v)))
-        out.loc[mask, "no_cas_scope_candidate_count"] = len(rows)
+
+        sources = "\n---\n".join(dict.fromkeys(_clean(v) for v in ranked["source_text"] if _clean(v)))
+        out.loc[mask, "no_cas_scope_candidate_count"] = len(ranked)
         out.loc[mask, "no_cas_scope_candidates"] = labels
         out.loc[mask, "no_cas_scope_designation_ids"] = designation_ids
         out.loc[mask, "no_cas_scope_regulatory_names"] = regulatory_names
         out.loc[mask, "no_cas_scope_regulatory_categories"] = regulatory_categories
-        out.loc[mask, "no_cas_scope_candidate_context"] = json.dumps(
-            context, ensure_ascii=False
+        out.loc[mask, "no_cas_scope_candidate_context"] = json.dumps(context, ensure_ascii=False)
+        out.loc[mask, "no_cas_scope_primary_designation_id"] = _clean(primary.get("designation_id"))
+        out.loc[mask, "no_cas_scope_primary_regulatory_name"] = _clean(primary.get("regulatory_name"))
+        out.loc[mask, "no_cas_scope_primary_category"] = _clean(primary.get("regulatory_categories"))
+        out.loc[mask, "no_cas_scope_primary_match_type"] = _clean(primary.get("candidate_match_type"))
+        out.loc[mask, "no_cas_scope_primary_explicit_exception"] = bool(primary.get("is_explicit_exception"))
+
+        existing = (
+            out.loc[mask, "review_regulatory_text"].fillna("")
+            if "review_regulatory_text" in out else pd.Series("", index=out.index[mask])
         )
-        existing = out.loc[mask, "review_regulatory_text"].fillna("") if "review_regulatory_text" in out else pd.Series("", index=out.index[mask])
-        out.loc[mask, "review_regulatory_text"] = existing.map(lambda v: "\n---\n".join(x for x in [str(v).strip(), sources] if x))
+        out.loc[mask, "review_regulatory_text"] = existing.map(
+            lambda v: "\n---\n".join(x for x in [str(v).strip(), sources] if x)
+        )
+
         confirmed = out.loc[mask, "gate_decision"].astype(str).str.contains("자동 확정")
         change_mask = mask.copy()
         change_mask.loc[mask] = ~confirmed.values
@@ -195,5 +245,6 @@ def attach_no_cas_candidates(summary: pd.DataFrame, candidates: pd.DataFrame) ->
         out.loc[change_mask, "overall_decision"] = "추가 확인 필요"
         out.loc[change_mask, "gate_status"] = "GATE_HOLD"
         out.loc[change_mask, "gate_decision"] = "보류(CAS 없는 규제범위 후보)"
-        out.loc[change_mask, "gate_hold_reason"] = rows.iloc[0]["candidate_reason"]
+        out.loc[change_mask, "gate_hold_reason"] = _clean(primary.get("candidate_reason"))
+
     return out
