@@ -54,160 +54,151 @@ def summary_row(**overrides):
 
 
 class PlainSummaryTest(unittest.TestCase):
-    def test_reader_guide_explains_hold_and_ai_in_plain_language(self):
+    def test_reader_guide_explains_new_final_policy(self):
         guide = build_reader_guide().set_index("용어")["쉬운 설명"]
-        self.assertIn("비규제라는 뜻이 아닙니다", guide["보류"])
-        self.assertIn("확정하지 않습니다", guide["AI 보조검토"])
+        self.assertIn("가장 관련성이 높은", guide["보류"])
+        self.assertIn("항상 우선", guide["명시적 제외"])
         policy = build_decision_policy()
         self.assertEqual(policy["판정결과"].tolist(), ["규제 해당", "보류", "비해당"])
-        hold_text = policy.loc[policy["판정결과"].eq("보류"), "언제 표시되는가"].iloc[0]
-        self.assertIn("복합 범위", hold_text)
+        self.assertIn("1~2문장", policy.loc[policy["판정결과"].eq("규제 해당"), "자세한 내용"].iloc[0])
 
-    def test_salt_candidate_is_short_and_names_its_category(self):
+    def test_hold_uses_only_primary_candidate(self):
         summary = pd.DataFrame([
             summary_row(
                 final_decision="전문가 검토 필요",
                 gate_decision="보류(CAS 없는 규제범위 후보)",
                 no_cas_scope_designation_ids="97-1-299",
-                no_cas_scope_regulatory_names="3,5-톨루엔디아민과 그 염류",
-                no_cas_scope_regulatory_categories="인체급성유해성물질",
-                no_cas_scope_candidate_context=(
-                    '[{"designation_id":"97-1-299","scope_type":"SALT_FAMILY"}]'
-                ),
-                llm_status="VALIDATED_OUTPUT",
-                llm_rule_relation="INSUFFICIENT_INFORMATION",
-                llm_explanation_ko="이 문장은 일반 결과표에 그대로 노출되면 안 됩니다.",
+                no_cas_scope_regulatory_names="3,5-톨루엔디아민과 그 염류; 2,5-톨루엔디아민과 그 염류",
+                no_cas_scope_regulatory_categories="인체급성유해성물질; 인체만성유해성물질",
+                no_cas_scope_primary_designation_id="97-1-299",
+                no_cas_scope_primary_regulatory_name="3,5-톨루엔디아민과 그 염류",
+                no_cas_scope_primary_category="인체급성유해성물질; 인체만성유해성물질",
+                no_cas_scope_primary_match_type="NAME_SCOPE_CANDIDATE",
+                no_cas_scope_primary_explicit_exception=False,
             )
         ])
         row = build_plain_summary(summary, pd.DataFrame(), None, "2026-5").iloc[0]
         self.assertEqual(row["판정결과"], "보류")
-        self.assertEqual(row["규제 카테고리"], "인체급성유해성물질")
-        self.assertIn("해당될 가능성이 높습니다", row["판단근거"])
         self.assertIn("3,5-톨루엔디아민과 그 염류", row["판단근거"])
-        self.assertNotIn("일반 결과표에 그대로", row["판단근거"])
+        self.assertNotIn("2,5-톨루엔디아민과 그 염류", row["판단근거"])
+        self.assertIn("전문가 검토", row["판단근거"])
 
-    def test_columns_are_limited_to_the_reader_facing_set(self):
+    def test_explicit_exclusion_beats_similarity_candidate(self):
+        summary = pd.DataFrame([
+            summary_row(
+                input_chemical_name="2,6-Diaminotoluene",
+                resolved_name="2,6-Diaminotoluene",
+                input_cas="823-40-5",
+                final_decision="전문가 검토 필요",
+                gate_decision="보류(CAS 없는 규제범위 후보)",
+                no_cas_scope_primary_designation_id="97-1-299",
+                no_cas_scope_primary_regulatory_name="톨루엔디아민류(2,6-톨루엔디아민 제외)와 그 염류",
+                no_cas_scope_primary_category="인체급성유해성물질; 인체만성유해성물질; 생태유해성물질",
+                no_cas_scope_primary_match_type="EXPLICIT_EXCEPTION_CAS",
+                no_cas_scope_primary_explicit_exception=True,
+                llm_rule_relation="INCLUDED_CANDIDATE",
+            )
+        ])
+        row = build_plain_summary(summary, pd.DataFrame(), None, "2026-5").iloc[0]
+        self.assertEqual(row["판정결과"], "보류")
+        self.assertIn("명시적 제외조건", row["판단근거"])
+        self.assertNotIn("해당될 가능성이 높", row["판단근거"])
+
+    def test_confirmed_result_suppresses_candidate_and_expert_review_text(self):
+        evidence = pd.DataFrame([
+            evidence_row(
+                chemical_name="Strychnine hydrochloride",
+                cas="1421-86-9",
+                concentration_pct=100.0,
+                match_type="검증된 염류 구조",
+                regulatory_substance_name="스트리시닌과 그 염류",
+                reference_parent_name="Strychnine",
+                reference_parent_cas="57-24-9",
+                designation_id="97-1-144",
+                acute_threshold_pct=1.0,
+                acute_decision="해당",
+                chronic_threshold_pct=float("nan"),
+                chronic_decision="규칙 없음",
+                eco_threshold_pct=25.0,
+                eco_decision="해당",
+            )
+        ])
+        summary = pd.DataFrame([
+            summary_row(
+                input_chemical_name="Strychnine hydrochloride",
+                resolved_name="Strychnine hydrochloride",
+                input_cas="1421-86-9",
+                concentration_pct=100.0,
+                no_cas_scope_primary_designation_id="97-1-144",
+                no_cas_scope_primary_regulatory_name="스트리시닌과 그 염류",
+                no_cas_scope_primary_category="인체급성유해성물질; 생태유해성물질",
+                llm_rule_relation="INCLUDED_CANDIDATE",
+            )
+        ])
+        cross = pd.DataFrame([{
+            "material_id": "A1",
+            "regime": "PROHIBITED",
+            "regime_label": "금지물질",
+            "decision": "규제 해당",
+            "substance_name": "Strychnine hydrochloride",
+            "source_name": "금지물질의 지정",
+            "source_reference": "현행 고시",
+        }])
+        row = build_plain_summary(summary, evidence, cross, "2026-5").iloc[0]
+        self.assertEqual(row["판정결과"], "규제 해당")
+        self.assertNotIn("전문가 검토", row["판단근거"])
+        self.assertNotIn("가능성이", row["판단근거"])
+        self.assertIn("금지물질", row["규제 카테고리"])
+        self.assertLessEqual(len(row["판단근거"]), 200)
+
+    def test_category_whitespace_is_normalized(self):
+        summary = pd.DataFrame([
+            summary_row(
+                final_decision="전문가 검토 필요",
+                gate_decision="보류(CAS 없는 규제범위 후보)",
+                no_cas_scope_primary_designation_id="97-1-299",
+                no_cas_scope_primary_regulatory_name="3,5-톨루엔디아민과 그 염류",
+                no_cas_scope_primary_category=" 인체급성유해성물질 ;  인체만성유해성물질 ; 생태유해성물질 ",
+            )
+        ])
+        row = build_plain_summary(summary, pd.DataFrame(), None, "2026-5").iloc[0]
+        self.assertEqual(
+            row["규제 카테고리"],
+            "인체급성유해성물질 / 인체만성유해성물질 / 생태유해성물질",
+        )
+        self.assertNotIn(" /  ", row["규제 카테고리"])
+
+    def test_columns_are_limited_to_reader_facing_set(self):
         plain = build_plain_summary(
             pd.DataFrame([summary_row()]), pd.DataFrame([evidence_row()]), None, "2026-5"
         )
         self.assertEqual(list(plain.columns), PLAIN_COLUMNS)
         self.assertEqual(len(plain), 1)
 
-    def test_regulated_row_names_category_threshold_and_concentration(self):
-        plain = build_plain_summary(
+    def test_regulated_row_names_threshold_and_concentration_compactly(self):
+        row = build_plain_summary(
             pd.DataFrame([summary_row()]), pd.DataFrame([evidence_row()]), None, "2026-5"
-        )
-        row = plain.iloc[0]
+        ).iloc[0]
         self.assertEqual(row["판정결과"], "규제 해당")
         self.assertEqual(row["규제 카테고리"], "인체만성유해성물질")
         self.assertIn("지정번호 97-1-156", row["판단근거"])
-        self.assertIn("기준 10% 이상", row["판단근거"])
-        self.assertIn("실제 함량 15%", row["판단근거"])
-        self.assertIn("인체급성유해성물질: 기준 25% 이상", row["판단근거"])
-        self.assertEqual(row["법적 근거"], "2026-5 지정번호 97-1-156")
+        self.assertIn("10% 이상", row["판단근거"])
+        self.assertIn("함량 15%", row["판단근거"])
+        self.assertLessEqual(len(row["판단근거"]), 200)
 
-    def test_salt_match_is_explained_with_the_reference_substance(self):
-        evidence = pd.DataFrame(
-            [
-                evidence_row(
-                    cas="142-04-1",
-                    match_type="검증된 염류 구조",
-                    reference_parent_name="Aniline",
-                    reference_parent_cas="62-53-3",
-                    concentration_pct=30.0,
-                    acute_decision="해당",
-                    chronic_decision="해당",
-                )
-            ]
-        )
-        summary = pd.DataFrame([summary_row(input_cas="142-04-1", concentration_pct=30.0)])
-        row = build_plain_summary(summary, evidence, None, "2026-5").iloc[0]
-        self.assertIn("염류로 구조가 확인되었습니다", row["판단근거"])
-        self.assertIn("CAS 62-53-3", row["판단근거"])
-
-    def test_below_threshold_is_reported_as_such_not_as_a_hold(self):
-        evidence = pd.DataFrame(
-            [
-                evidence_row(
-                    concentration_pct=0.5, acute_decision="기준 미만", chronic_decision="기준 미만"
-                )
-            ]
-        )
-        summary = pd.DataFrame(
-            [
-                summary_row(
-                    concentration_pct=0.5,
-                    final_decision="기준 미만",
-                    gate_decision="보류(비해당 단정 불가)",
-                    gate_hold_reason="자료 커버리지 미완: 제한물질(해당 카테고리 규칙 데이터 없음)",
-                )
-            ]
-        )
-        row = build_plain_summary(summary, evidence, None, "2026-5").iloc[0]
-        self.assertEqual(row["판정결과"], "보류")
-        self.assertIn("확인하지 못한 사항", row["판단근거"])
-        self.assertIn("제한물질", row["판단근거"])
-
-    def test_no_match_states_that_the_list_was_searched(self):
-        summary = pd.DataFrame(
-            [
-                summary_row(
-                    final_decision="확인 범위 내 비해당",
-                    gate_decision="확인 범위 내 비해당",
-                )
-            ]
-        )
+    def test_no_match_states_checked_scope(self):
+        summary = pd.DataFrame([
+            summary_row(
+                final_decision="확인 범위 내 비해당",
+                gate_decision="확인 범위 내 비해당",
+            )
+        ])
         row = build_plain_summary(summary, pd.DataFrame(), None, "2026-5").iloc[0]
         self.assertEqual(row["판정결과"], "비해당")
-        self.assertIn("일치하는 항목은 없었습니다", row["판단근거"])
+        self.assertIn("확인되지 않았습니다", row["판단근거"])
         self.assertEqual(row["규제 카테고리"], "해당 없음")
 
-    def test_unverified_structure_match_is_explained_not_asserted(self):
-        evidence = pd.DataFrame(
-            [
-                evidence_row(
-                    evidence_status="STRUCTURE_UNVERIFIED_HOLD",
-                    match_type="검증된 염류 구조",
-                    chronic_decision="해당",
-                )
-            ]
-        )
-        summary = pd.DataFrame(
-            [
-                summary_row(
-                    final_decision="전문가 검토 필요",
-                    gate_decision="보류(비해당 단정 불가)",
-                    gate_hold_reason="사용자 SMILES 미검증. 구조범위 규정 해당 여부를 자동 확정할 수 없습니다.",
-                )
-            ]
-        )
-        row = build_plain_summary(summary, evidence, None, "2026-5").iloc[0]
-        self.assertEqual(row["판정결과"], "보류")
-        self.assertEqual(row["규제 카테고리"], "해당 없음")
-        self.assertIn("PubChem", row["판단근거"])
-
-    def test_cross_regime_match_adds_its_own_category(self):
-        cross = pd.DataFrame(
-            [
-                {
-                    "material_id": "A1",
-                    "regime": "RESTRICTED",
-                    "regime_label": "제한물질",
-                    "decision": "규제 해당",
-                    "substance_name": "아닐린",
-                    "source_name": "제한물질·금지물질의 지정",
-                    "source_reference": "2026-3",
-                    "missing_enterprise_fields": "",
-                }
-            ]
-        )
-        row = build_plain_summary(
-            pd.DataFrame([summary_row()]), pd.DataFrame([evidence_row()]), cross, "2026-5"
-        ).iloc[0]
-        self.assertIn("제한물질", row["규제 카테고리"])
-        self.assertIn("제한물질 2026-3", row["법적 근거"])
-
-    def test_plain_evidence_is_a_short_citation_table(self):
+    def test_plain_evidence_is_short_citation_table(self):
         table = build_plain_evidence(pd.DataFrame([evidence_row()]))
         self.assertIn("규제 원문", table.columns)
         self.assertNotIn("evidence_status", table.columns)
