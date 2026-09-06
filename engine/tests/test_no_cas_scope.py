@@ -48,6 +48,34 @@ class NoCasScopeTest(unittest.TestCase):
         found = screen_no_cas_scopes(inv, self.index)
         self.assertIn("97-1-296", set(found["designation_id"]))
 
+    def test_35_toluenediamine_exact_cas_beats_25_name_similarity(self):
+        inv = pd.DataFrame([{
+            "material_id": "T35", "chemical_name": "3,5-Toluenediamine", "cas": "108-71-4"
+        }])
+        found = screen_no_cas_scopes(inv, self.index)
+        rows = found[found["material_id"].eq("T35")]
+        self.assertTrue((rows["regulatory_name"].astype(str).str.contains("3,5-톨루엔디아민", regex=False)).any())
+        summary = pd.DataFrame([{"material_id":"T35","gate_decision":"보류(비해당 단정 불가)","review_regulatory_text":""}])
+        attached = attach_no_cas_candidates(summary, rows)
+        self.assertIn("3,5-톨루엔디아민", attached.loc[0,"no_cas_scope_primary_regulatory_name"])
+        self.assertNotIn("2,5-톨루엔디아민", attached.loc[0,"no_cas_scope_primary_regulatory_name"])
+        self.assertEqual(attached.loc[0,"no_cas_scope_primary_match_type"], "EXACT_SCOPE_CAS_CANDIDATE")
+
+    def test_26_toluenediamine_explicit_exclusion_beats_other_isomer_candidate(self):
+        inv = pd.DataFrame([{
+            "material_id": "T26", "chemical_name": "2,6-Diaminotoluene", "cas": "823-40-5"
+        }])
+        found = screen_no_cas_scopes(inv, self.index)
+        rows = found[found["material_id"].eq("T26")]
+        excluded = rows[rows["candidate_match_type"].eq("EXPLICIT_EXCEPTION_CAS")]
+        self.assertFalse(excluded.empty)
+        self.assertTrue(excluded["regulatory_name"].astype(str).str.contains("2,6-톨루엔디아민 제외", regex=False).any())
+        summary = pd.DataFrame([{"material_id":"T26","gate_decision":"보류(비해당 단정 불가)","review_regulatory_text":""}])
+        attached = attach_no_cas_candidates(summary, rows)
+        self.assertTrue(bool(attached.loc[0,"no_cas_scope_primary_explicit_exception"]))
+        self.assertEqual(attached.loc[0,"no_cas_scope_primary_match_type"], "EXPLICIT_EXCEPTION_CAS")
+        self.assertIn("2,6-톨루엔디아민 제외", attached.loc[0,"no_cas_scope_primary_regulatory_name"])
+
 
 if __name__ == "__main__":
     unittest.main()
