@@ -44,6 +44,53 @@ def _tokens(value: Any) -> set[str]:
     return tokens
 
 
+def _extract_exception_cas(*texts: Any) -> set[str]:
+    """Extract CAS numbers that are explicitly inside an exclusion clause.
+
+    The approved master does not always populate exception_cas separately.
+    Many rows instead carry the exclusion only in English source/name text,
+    e.g. "Toluenediamines(excluding 2,6-toluenediamine(823-40-5)...)".
+    We therefore parse only text following an explicit exclusion marker, never
+    arbitrary CAS numbers elsewhere in the row.
+    """
+    found: set[str] = set()
+    for raw in texts:
+        text = _clean(raw)
+        if not text:
+            continue
+        lower = text.lower()
+
+        # English: take the bounded clause starting at "excluding" and stop
+        # before generic "with the exception ..." wording when present.
+        start = 0
+        while True:
+            idx = lower.find("excluding", start)
+            if idx < 0:
+                break
+            end_candidates = [
+                p for p in [
+                    lower.find("with the exception", idx + 9),
+                    lower.find("except as", idx + 9),
+                    lower.find("provided that", idx + 9),
+                ] if p >= 0
+            ]
+            end = min(end_candidates) if end_candidates else min(len(text), idx + 1200)
+            found.update(CAS_RE.findall(text[idx:end]))
+            start = idx + 9
+
+        # Korean: source rows may contain a parenthesized "... 제외" list.
+        # Restrict the scan to a short local clause immediately preceding 제외.
+        for m in re.finditer(r"제외", text):
+            left = max(0, m.start() - 800)
+            clause = text[left:m.end()]
+            # Prefer the innermost likely list boundary when one exists.
+            boundary = max(clause.rfind("("), clause.rfind("["), clause.rfind(";"), clause.rfind("|"))
+            if boundary >= 0:
+                clause = clause[boundary + 1:]
+            found.update(CAS_RE.findall(clause))
+    return found
+
+
 def build_no_cas_scope_index(master: pd.DataFrame, notice: str) -> pd.DataFrame:
     if master is None or master.empty:
         return pd.DataFrame()
@@ -56,6 +103,8 @@ def build_no_cas_scope_index(master: pd.DataFrame, notice: str) -> pd.DataFrame:
         english = _clean(r.get("substance_name_en"))
         korean = _clean(r.get("substance_name_ko"))
         embedded = sorted(set(CAS_RE.findall(" ".join([source, english, _clean(r.get("all_cas_in_row"))]))))
+        explicit_exception_cas = set(CAS_RE.findall(_clean(r.get("exception_cas"))))
+        explicit_exception_cas.update(_extract_exception_cas(source, english, korean))
         lower = f"{korean} {english}".lower()
         if any(k in lower for k in ("reaction product", "reaction mixture", "반응생성물", "반응혼합물")):
             scope = "REACTION_PRODUCT"
@@ -73,14 +122,14 @@ def build_no_cas_scope_index(master: pd.DataFrame, notice: str) -> pd.DataFrame:
             "threshold_chronic": r.get("chronic_threshold_raw"),
             "threshold_eco": r.get("eco_threshold_raw"),
             "source_text": source, "authoritative_source": bool(r.get("authoritative_source")),
-            "exception_cas": ";".join(sorted(set(CAS_RE.findall(_clean(r.get("exception_cas")))))),
+            "exception_cas": ";".join(sorted(explicit_exception_cas)),
             "name_tokens": _tokens(f"{korean} {english}"),
         })
     return pd.DataFrame(rows)
 
 
 def screen_no_cas_scopes(inventory: pd.DataFrame, index: pd.DataFrame) -> pd.DataFrame:
-    """Return conservative candidates, with explicit exclusions ranked first."""
+    """Return conservative candidates, with legal/exact evidence ranked first."""
     if inventory is None or inventory.empty or index is None or index.empty:
         return pd.DataFrame()
     out = []
@@ -115,7 +164,14 @@ def screen_no_cas_scopes(inventory: pd.DataFrame, index: pd.DataFrame) -> pd.Dat
             elif component_hit and scope in {"REACTION_PRODUCT", "MIXTURE"}:
                 reason = "법규 원문 속 구성성분 CAS와 일치하나 규제 혼합물·반응생성물 자체인지 확인이 필요합니다."
                 match = "COMPONENT_CAS_CANDIDATE"
-                score = 500.0
+                score = 800.0
+            elif component_hit:
+                # Exact CAS evidence must beat a merely similar name. This is
+                # essential when several named isomers share one designation
+                # number (e.g. 3,5- vs 2,5-toluenediamine).
+                reason = "법규 원문에 이 CAS번호가 직접 기재된 범위 후보입니다. 해당 범위의 법적 적용 여부는 전문가 확인이 필요합니다."
+                match = "EXACT_SCOPE_CAS_CANDIDATE"
+                score = 700.0
             elif name_hit:
                 reason = "회사 물질명과 CAS 없는 총칭·염류·UVCB 규제명이 관련되어 동일성 확인이 필요합니다."
                 match = "NAME_SCOPE_CANDIDATE"
@@ -148,6 +204,7 @@ def _candidate_sort_key(row: pd.Series) -> tuple:
     match_rank = {
         "EXPLICIT_EXCEPTION_CAS": 0,
         "COMPONENT_CAS_CANDIDATE": 1,
+        "EXACT_SCOPE_CAS_CANDIDATE": 1,
         "NAME_SCOPE_CANDIDATE": 2,
         "SCOPE_CANDIDATE": 3,
     }.get(_clean(row.get("candidate_match_type")), 9)
@@ -189,7 +246,6 @@ def attach_no_cas_candidates(summary: pd.DataFrame, candidates: pd.DataFrame) ->
         ranked = ranked.sort_values("_sort_key", kind="stable")
         primary = ranked.iloc[0]
 
-        # Keep the full candidate set only in audit fields. Reader-facing output uses primary only.
         labels = "; ".join(
             dict.fromkeys(f"{_clean(r.designation_id)} {_clean(r.regulatory_name)}".strip() for r in ranked.itertuples())
         )
