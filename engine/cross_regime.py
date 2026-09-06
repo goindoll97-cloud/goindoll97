@@ -54,9 +54,6 @@ NOTICE_SPECS = [
         "title": "제한물질·금지물질의 지정",
         "terms": ["제한물질", "금지물질", "지정"],
     },
-    # AUTHORIZED (허가물질 지정 등에 관한 규정) is intentionally out of scope:
-    # its attachments are score sheets and comment-submission forms, not a
-    # CAS/threshold table, so there is nothing here for this pipeline to use.
 ]
 
 RULE_COLUMNS = [
@@ -309,11 +306,6 @@ def fetch_cross_regime_candidates(timeout: int = 90) -> tuple[pd.DataFrame, pd.D
             status["appendix_attachments"] = []
             continue
 
-        # The appendix (별표) tables that carry the actual CAS/threshold lists
-        # live in a separate attached file, not in this article body, so they
-        # get their own try/except: a failure here must never overwrite the
-        # article-text extraction status above, and must always be visible
-        # rather than silently folded into a generic "추출 실패" message.
         appendix_default = (
             "RESTRICTED_PROHIBITED_REVIEW"
             if spec["regime"] == "RESTRICTED_PROHIBITED"
@@ -433,6 +425,8 @@ def screen_cross_regimes(
                         "rule_id": clean(rule.get("rule_id")),
                         "designation_id": clean(rule.get("designation_id")),
                         "substance_name": clean(rule.get("substance_name")),
+                        "concentration_threshold_pct": rule.get("concentration_threshold_pct"),
+                        "concentration_operator": clean(rule.get("concentration_operator")) or "이상",
                         "missing_enterprise_fields": ";".join(missing),
                         "reason": reason,
                         "source_text": clean(rule.get("source_text")),
@@ -458,9 +452,6 @@ def screen_cross_regimes(
             if detail_frame.empty:
                 hits = pd.DataFrame()
             else:
-                # A hit in the combined restricted/prohibited notice that the
-                # parser could not attribute belongs to both columns as a review
-                # item; dropping it would read as "no match found".
                 regimes = detail_frame["regime"].map(clean)
                 matched = regimes.eq(regime)
                 if regime in {"RESTRICTED", "PROHIBITED"}:
@@ -478,12 +469,6 @@ def screen_cross_regimes(
 
 
 def add_regulatory_category_columns(summary: pd.DataFrame) -> pd.DataFrame:
-    """Add concise, multi-label category fields without promoting API candidates.
-
-    A category is confirmed only when its regime-level decision is ``규제 해당``.
-    Candidate matches and matched rules lacking enterprise conditions are kept in
-    a separate review field so the UI cannot present them as final legal matches.
-    """
     out = summary.copy()
 
     def collect(row: pd.Series, allowed: set[str]) -> str:
