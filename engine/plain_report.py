@@ -45,7 +45,7 @@ READER_GUIDE_ROWS = [
     ("기준물질", "포괄 규제범위를 연결하기 위한 기준 물질 또는 기준 CAS입니다. 기준물질과의 연결만으로 규제 해당을 자동확정하지 않습니다."),
     ("포괄 규제범위 후보", "혼합물·반응생성물·화합물군·UVCB·일반 구조범위처럼 직접 CAS 또는 검증된 염류 구조만으로 확정하기 어려운 규제항목의 검토 후보입니다. 후보는 분류·검토 보조용이며 자동확정하지 않습니다."),
     ("명시적 제외", "법규 원문에서 특정 물질 또는 조건을 해당 규제범위에서 제외한다고 명시한 경우입니다. 명시적 제외조건은 이름·구조 유사성에 따른 포함 후보보다 항상 우선합니다. 다만 해당 규제항목에서 제외됐다는 사실만으로 다른 규제까지 모두 비해당으로 확정하지 않으므로 최종 결과는 보류될 수 있습니다."),
-    ("법적 근거", "판정 근거가 된 규제 카테고리와 고유번호를 표시합니다. 예: 「인체등유해성물질」 고유번호 97-1-102."),
+    ("법적 근거", "인체등유해성·제한·금지물질은 고유번호를, 사고대비물질은 별표 1의 항목번호를 표시합니다. 예: 「인체등유해성물질」 고유번호 97-1-102; 「사고대비물질」 별표 1 제1호."),
     ("AI 보조검토", "AI는 포괄 규제범위 후보의 분류와 추가 확인사항 정리에만 사용합니다. AI 판단은 규제 해당·비해당 자동확정 근거로 사용하지 않습니다."),
 ]
 
@@ -155,6 +155,21 @@ def _cross_threshold(row: pd.Series) -> tuple[float, str]:
     return np.nan, ""
 
 
+def _cross_legal_reference(regime: str, label: str, designation: str) -> str:
+    """Return a reader-facing legal identifier, never an internal parser id."""
+    if not designation:
+        return ""
+    if regime == "ACCIDENT_PREPAREDNESS":
+        match = re.fullmatch(r"ITEM-(\d+)", designation, flags=re.I)
+        if match:
+            return f"「{label}」 별표 1 제{int(match.group(1))}호"
+        item_match = re.search(r"(?:ITEM[-_ ]*)?(\d+)$", designation, flags=re.I)
+        if item_match and designation.upper().startswith("ITEM"):
+            return f"「{label}」 별표 1 제{int(item_match.group(1))}호"
+        return f"「{label}」 별표 1 항목 {designation}"
+    return f"「{label}」 고유번호 {designation}"
+
+
 def _cross_sentences(rows: pd.DataFrame, concentration: float, confirmed_only: bool = False) -> tuple[list[str], list[str], list[str]]:
     categories: list[str] = []
     sentences: list[str] = []
@@ -162,10 +177,12 @@ def _cross_sentences(rows: pd.DataFrame, concentration: float, confirmed_only: b
     if rows is None or rows.empty:
         return categories, sentences, citations
     for _, row in rows.iterrows():
-        label = REGIME_LABELS.get(clean(row.get("regime")), clean(row.get("regime_label")))
+        regime = clean(row.get("regime"))
+        label = REGIME_LABELS.get(regime, clean(row.get("regime_label")))
         decision = clean(row.get("decision"))
         name = clean(row.get("substance_name")) or label
         designation = clean(row.get("designation_id"))
+        legal_ref = _cross_legal_reference(regime, label, designation)
         if confirmed_only and decision != "규제 해당":
             continue
         threshold, operator = _cross_threshold(row)
@@ -177,25 +194,25 @@ def _cross_sentences(rows: pd.DataFrame, concentration: float, confirmed_only: b
                 )
             else:
                 sentences.append(f"「{label}」 목록에 CAS번호로 직접 등재되고 적용 조건을 충족하여 규제 해당입니다.")
-            if designation:
-                citations.append(f"「{label}」 고유번호 {designation}")
+            if legal_ref:
+                citations.append(legal_ref)
         elif decision == "해당 후보·검토 필요":
             sentences.append(f"「{label}」 목록에서 같은 CAS번호가 후보로 확인되어 전문가 검토가 필요합니다.")
-            if designation:
-                citations.append(f"「{label}」 고유번호 {designation} (검토 후보)")
+            if legal_ref:
+                citations.append(f"{legal_ref} (검토 후보)")
         elif decision == "기준 미만·조건 비충족":
             if np.isfinite(threshold) and np.isfinite(concentration):
                 sentences.append(f"「{label}」 목록에는 등재되어 있으나 {_fmt(threshold)}% {operator} 기준에 함량 {_fmt(concentration)}%로 기준을 충족하지 않습니다.")
             else:
                 sentences.append(f"「{label}」 목록에는 등재되어 있으나 적용 조건을 충족하지 않습니다.")
-            if designation:
-                citations.append(f"「{label}」 고유번호 {designation}")
+            if legal_ref:
+                citations.append(legal_ref)
         elif decision in {"추가정보 필요", "조건 검토 필요"}:
             missing = clean(row.get("missing_enterprise_fields")).replace(";", ", ")
             detail = f" 필요한 정보: {missing}." if missing else ""
             sentences.append(f"「{label}」 목록의 '{name}'과 일치하지만 적용 조건 확인이 필요합니다.{detail}")
-            if designation:
-                citations.append(f"「{label}」 고유번호 {designation} (검토 필요)")
+            if legal_ref:
+                citations.append(f"{legal_ref} (검토 필요)")
     return categories, sentences, citations
 
 
