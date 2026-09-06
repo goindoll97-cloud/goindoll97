@@ -43,21 +43,21 @@ PLAIN_COLUMNS = [
 ]
 
 READER_GUIDE_ROWS = [
-    ("규제 해당", "공식 규제목록의 물질과 직접 일치하거나 승인된 구조규칙으로 동일성이 확인되고, 적용되는 함량·조건도 충족한 경우입니다."),
-    ("보류", "규제 비해당을 의미하지 않습니다. 포괄 규제범위, 염류·이성질체 관계, 명시적 제외조건, 적용조건 또는 자료 부족 등 사람이 추가로 확인해야 할 사항이 있는 경우입니다."),
+    ("규제 해당", "공식 규제목록의 CAS번호와 직접 일치하거나, 사전 승인된 '~와 그 염류' 규칙에서 검증된 염류 구조로 확인되고 적용 함량·조건도 충족한 경우입니다."),
+    ("보류", "규제 비해당을 의미하지 않습니다. 혼합물·반응생성물·화합물군·UVCB·일반 구조범위·기준물질 CAS 연결·이름 유사성·명시적 제외조건·자료 부족 등 사람이 추가로 확인해야 할 사항이 있는 경우입니다."),
     ("비해당", "현재 앱이 확인하는 규제범위와 필요한 조건을 모두 검토한 결과 적용되는 규제항목이 확인되지 않은 경우입니다. 국내 모든 법률에서 비규제라는 의미는 아닙니다."),
-    ("직접 CAS 일치", "회사 물질의 CAS번호가 공식 규제목록에 직접 등재된 CAS번호와 일치하는 경우입니다."),
-    ("검증된 염류 구조", "회사 물질이 규제 기준물질의 염류에 해당하는지를 승인된 기준과 확인된 화학구조를 이용해 검증한 경우입니다."),
-    ("승인된 구조범위 규칙", "염류·이성질체·수화물 등 포괄적인 규제범위를 판정하기 위해 사전에 검증·승인한 구조규칙입니다."),
-    ("포괄 규제범위 후보", "단일 CAS번호로 직접 지정되지 않고 염류·화합물군·혼합물·반응생성물 등으로 범위 지정된 규제항목과 관련될 가능성이 있는 경우입니다. 후보만으로 규제 해당을 자동 확정하지 않습니다."),
+    ("직접 CAS 일치", "회사 물질의 CAS번호가 공식 규제목록에 직접 등재된 CAS번호와 일치하는 경우입니다. 자동확정이 가능한 핵심 경로입니다."),
+    ("검증된 염류 구조", "회사 물질이 '~와 그 염류' 규정의 염류인지 승인된 염류 규칙과 PubChem으로 검증된 구조를 이용해 확인한 경우입니다. 자동확정이 가능한 핵심 경로입니다."),
+    ("기준물질", "포괄 규제범위를 연결하기 위한 기준 물질 또는 기준 CAS입니다. 기준물질과의 연결만으로 규제 해당을 자동확정하지 않습니다."),
+    ("포괄 규제범위 후보", "혼합물·반응생성물·화합물군·UVCB·일반 구조범위처럼 직접 CAS 또는 검증된 염류 구조만으로 확정하기 어려운 규제항목의 검토 후보입니다. 후보는 분류·검토 보조용이며 자동확정하지 않습니다."),
     ("명시적 제외", "법규 원문에서 특정 물질 또는 조건을 해당 규제범위에서 제외한다고 명시한 경우입니다. 명시적 제외조건은 이름·구조 유사성에 따른 포함 후보보다 항상 우선합니다. 다만 해당 규제항목에서 제외됐다는 사실만으로 다른 규제까지 모두 비해당으로 확정하지 않으므로 최종 결과는 보류될 수 있습니다."),
     ("법적 근거", "판정 또는 검토 후보의 근거가 된 고시명, 지정번호, 규제항목 등 확인 가능한 법적 출처입니다."),
-    ("AI 보조검토", "AI는 포괄 규제범위 후보의 포함·제외 관계와 추가 확인사항을 정리하는 보조수단입니다. AI 판단만으로 규제 해당 또는 비해당을 자동 확정하지 않습니다."),
+    ("AI 보조검토", "AI는 포괄 규제범위 후보의 분류와 추가 확인사항 정리에만 사용합니다. AI 판단은 규제 해당·비해당 자동확정 근거로 사용하지 않습니다."),
 ]
 
 DECISION_POLICY_ROWS = [
-    ("규제 해당", "직접 CAS 또는 승인된 구조규칙으로 일치하고 함량·조건도 충족", "확정 근거만 1~2문장으로 표시"),
-    ("보류", "정보 부족, 포괄 규제범위 해석, 적용조건 확인 또는 명시적 제외 후 다른 규제 적용 여부를 추가 확인해야 하는 경우", "가장 관련성 높은 규제명 하나와 검토 필요 사유만 표시"),
+    ("규제 해당", "직접 CAS 일치 또는 검증된 염류 구조 일치이며 함량·조건도 충족", "확정 근거만 1~2문장으로 표시"),
+    ("보류", "직접 CAS·검증된 염류 구조 이외의 포괄 규제범위, 정보 부족, 적용조건 확인 또는 명시적 제외 후 다른 규제 적용 여부를 추가 확인해야 하는 경우", "가장 관련성 높은 규제명 하나와 검토 필요 사유만 표시"),
     ("비해당", "확인 가능한 규제범위와 필요한 조건을 모두 검토했으나 적용 항목이 확인되지 않은 경우", "확인한 범위와 미해당 근거를 표시"),
 ]
 
@@ -97,14 +97,12 @@ def _match_short(row: pd.Series) -> str:
     match_type = clean(row.get("match_type"))
     parent = clean(row.get("reference_parent_name")) or clean(row.get("regulatory_substance_name"))
     parent_cas = clean(row.get("reference_parent_cas"))
-    if match_type == "직접 CAS" or (parent_cas and parent_cas == clean(row.get("cas"))):
+    if match_type == "직접 CAS":
         return "CAS번호가 직접 일치"
     if match_type == "검증된 염류 구조":
         ref = f"{parent}(CAS {parent_cas})" if parent_cas else parent
         return f"{ref}의 염류로 구조 확인"
-    if match_type == "검증된 구조범위 규칙":
-        return "승인된 구조범위 규칙과 일치"
-    return "검증 규칙과 일치"
+    return "검토 후보와 연결"
 
 
 def _entry_short(row: pd.Series, notice: str) -> str:
@@ -315,9 +313,10 @@ def build_plain_summary(
             explicit_exclusion = True
 
         if result == "규제 해당":
+            # Only evidence already permitted by the trust gate reaches this branch.
             sentences = hazard_sentences + cross_sentences
             if not sentences:
-                sentences = ["공식 규제목록과 적용 조건이 확인되어 규제 해당으로 확정되었습니다."]
+                sentences = ["직접 CAS 또는 검증된 염류 구조와 적용 조건이 확인되어 규제 해당으로 확정되었습니다."]
             sentences = sentences[:2]
 
         elif result == "비해당":
@@ -329,9 +328,9 @@ def build_plain_summary(
                 cas = clean(item.get("input_cas"))
                 searchable = bool(cas and valid_cas_checksum(cas) and cas.replace("-", "").strip("0"))
                 if searchable:
-                    sentences = [f"「{clean(notice)}」 확인 범위에서 이 CAS번호에 적용되는 규제 항목이 확인되지 않았습니다."]
+                    sentences = [f"「{clean(notice)}」 확인 범위에서 이 CAS번호에 적용되는 자동확정 대상 규제 항목이 확인되지 않았습니다."]
                 else:
-                    sentences = ["확인 범위에서 적용되는 규제 항목이 확인되지 않았습니다."]
+                    sentences = ["확인 범위에서 적용되는 자동확정 대상 규제 항목이 확인되지 않았습니다."]
             categories = []
 
         else:
@@ -342,12 +341,12 @@ def build_plain_summary(
             elif candidate_id or candidate_name != "복합 규제범위":
                 target = f"'{candidate_name}'" + (f"(지정번호 {candidate_id})" if candidate_id else "")
                 prefix = f"{candidate_category} " if candidate_category else ""
-                sentences = [f"본 물질은 {prefix}{target}과 관련될 가능성이 있어 전문가 검토가 필요합니다."]
+                sentences = [f"본 물질은 {prefix}{target}과 관련된 포괄 규제범위 후보입니다. 자동확정하지 않고 전문가 검토가 필요합니다."]
                 if candidate_id:
                     citations.append(f"{clean(notice)} 지정번호 {candidate_id} (검토 후보)")
             elif not held.empty:
                 name = clean(held.iloc[0].get("regulatory_substance_name"))
-                sentences = [f"'{name}'의 구조범위 후보이나 구조 확인이 부족해 전문가 검토가 필요합니다."]
+                sentences = [f"'{name}'의 포괄 규제범위 후보이나 구조 확인이 부족해 전문가 검토가 필요합니다."]
             else:
                 hold = _simplify_hold(item.get("gate_hold_reason"))
                 sentences = [hold] if hold else cross_sentences[:1]
