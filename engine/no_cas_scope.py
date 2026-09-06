@@ -59,9 +59,6 @@ def _extract_exception_cas(*texts: Any) -> set[str]:
         if not text:
             continue
         lower = text.lower()
-
-        # English: take the bounded clause starting at "excluding" and stop
-        # before generic "with the exception ..." wording when present.
         start = 0
         while True:
             idx = lower.find("excluding", start)
@@ -77,13 +74,9 @@ def _extract_exception_cas(*texts: Any) -> set[str]:
             end = min(end_candidates) if end_candidates else min(len(text), idx + 1200)
             found.update(CAS_RE.findall(text[idx:end]))
             start = idx + 9
-
-        # Korean: source rows may contain a parenthesized "... 제외" list.
-        # Restrict the scan to a short local clause immediately preceding 제외.
         for m in re.finditer(r"제외", text):
             left = max(0, m.start() - 800)
             clause = text[left:m.end()]
-            # Prefer the innermost likely list boundary when one exists.
             boundary = max(clause.rfind("("), clause.rfind("["), clause.rfind(";"), clause.rfind("|"))
             if boundary >= 0:
                 clause = clause[boundary + 1:]
@@ -166,18 +159,15 @@ def screen_no_cas_scopes(inventory: pd.DataFrame, index: pd.DataFrame) -> pd.Dat
                 match = "COMPONENT_CAS_CANDIDATE"
                 score = 800.0
             elif component_hit:
-                # Exact CAS evidence must beat a merely similar name. This is
-                # essential when several named isomers share one designation
-                # number (e.g. 3,5- vs 2,5-toluenediamine).
-                reason = "법규 원문에 이 CAS번호가 직접 기재된 범위 후보입니다. 해당 범위의 법적 적용 여부는 전문가 확인이 필요합니다."
+                reason = "법규 원문에 이 CAS번호가 직접 기재된 포괄 범위 후보입니다. 직접 CAS 지정과 구분하여 전문가 확인이 필요합니다."
                 match = "EXACT_SCOPE_CAS_CANDIDATE"
                 score = 700.0
             elif name_hit:
-                reason = "회사 물질명과 CAS 없는 총칭·염류·UVCB 규제명이 관련되어 동일성 확인이 필요합니다."
+                reason = "회사 물질명과 포괄 규제범위의 규제명이 관련되어 동일성 확인이 필요합니다."
                 match = "NAME_SCOPE_CANDIDATE"
                 score = float(overlap * 100.0 + matched_token_count)
             else:
-                reason = "CAS 없는 규제범위의 구성성분 후보입니다."
+                reason = "포괄 규제범위의 구성성분 후보입니다."
                 match = "SCOPE_CANDIDATE"
                 score = float(overlap * 100.0)
 
@@ -300,7 +290,7 @@ def attach_no_cas_candidates(summary: pd.DataFrame, candidates: pd.DataFrame) ->
         out.loc[change_mask, "final_decision"] = "전문가 검토 필요"
         out.loc[change_mask, "overall_decision"] = "추가 확인 필요"
         out.loc[change_mask, "gate_status"] = "GATE_HOLD"
-        out.loc[change_mask, "gate_decision"] = "보류(CAS 없는 규제범위 후보)"
+        out.loc[change_mask, "gate_decision"] = "보류(포괄 규제범위 후보)"
         out.loc[change_mask, "gate_hold_reason"] = _clean(primary.get("candidate_reason"))
 
     return out
