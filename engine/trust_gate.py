@@ -59,19 +59,21 @@ FAIL = "미충족"
 POSITIVE_DECISIONS = {"규제 해당"}
 CANDIDATE_DECISIONS = {"해당 후보·검토 필요", "규제 해당 후보"}
 # company_engine.py's own human-hazard final_decision uses a different
-# vocabulary than the cross-regime CANDIDATE_DECISIONS above (e.g. an
-# anchor/contextual CAS reference that needs a person to confirm scope, a
+# vocabulary than the cross-regime CANDIDATE_DECISIONS above (e.g. a
+# 기준물질/문맥상 CAS reference that needs a person to confirm scope, a
 # missing concentration, or an invalid CAS). Without checking for these too,
 # the gate never sees them as unresolved and can wrongly confirm "확인 범위
 # 내 비해당" for a material company_engine itself flagged as needing review.
 HUMAN_HAZARD_REVIEW_DECISIONS = {"전문가 검토 필요", "정보 부족", "물질정보 확인 실패"}
 
-# Only these evidence paths may support an automatic positive decision.  The
-# LLM is deliberately absent: its output is review assistance, never proof.
+# Only these two evidence paths may support an automatic positive decision.
+# Everything else -- compound groups, mixtures, reaction products, UVCBs,
+# generic structural ranges, name similarity and 기준물질/contextual links --
+# is classification/review assistance only. The LLM is deliberately absent:
+# its output is review assistance, never proof.
 AUTO_CONFIRM_MATCH_TYPES = {
     "직접 CAS",
     "검증된 염류 구조",
-    "검증된 구조범위 규칙",
 }
 MANUAL_ONLY_SCOPE_TYPES = {
     "DERIVATIVE",
@@ -81,6 +83,7 @@ MANUAL_ONLY_SCOPE_TYPES = {
     "MANUAL_REVIEW",
     "MIXTURE",
     "NAME_OR_UVCB",
+    "STRUCTURAL_RANGE",
 }
 
 
@@ -137,7 +140,7 @@ def cas_gate(row: Any) -> dict:
 def structure_evidence_status(row: Any) -> str:
     """Classify how far the structure used for scope matching can be traced.
 
-    ``USER_SUPPLIED`` SMILES are accepted for automatic scope matching only when
+    ``USER_SUPPLIED`` SMILES are accepted for automatic salt matching only when
     they reproduce the connectivity of the PubChem record that carries the exact
     CAS synonym.  An unchecked user string is never sufficient on its own.
     """
@@ -178,13 +181,13 @@ def structure_gate(row: Any) -> dict:
     status = clean(row.get("structure_evidence_status")) or structure_evidence_status(row)
     label = STRUCTURE_STATUS_KO.get(status, status)
     if status in STRUCTURE_AUTOMATABLE:
-        return {"stage_status": PASS, "code": status, "detail": f"{label}로 구조범위 규칙 적용이 가능합니다."}
+        return {"stage_status": PASS, "code": status, "detail": f"{label}로 염류 구조 검증이 가능합니다."}
     if status == "USER_SMILES_PUBCHEM_CONFLICT":
         return {"stage_status": FAIL, "code": status, "detail": f"{label}. 구조 기반 판정을 적용하지 않았습니다."}
     return {
         "stage_status": HOLD,
         "code": status,
-        "detail": f"{label}. 염류·이성질체 등 구조범위 규정 해당 여부를 자동 확정할 수 없습니다.",
+        "detail": f"{label}. 염류 구조 해당 여부를 자동 확정할 수 없습니다.",
     }
 
 
@@ -215,8 +218,6 @@ def cross_rule_availability(
         if candidate_rules is not None and not candidate_rules.empty:
             candidate_n = int(candidate_rules["regime"].map(clean).eq(regime).sum())
             if regime in {"RESTRICTED", "PROHIBITED"}:
-                # The restricted/prohibited notice is published as one document.
-                # Rows the parser could not split still cover both regimes.
                 candidate_n += int(
                     candidate_rules["regime"]
                     .map(clean)
@@ -238,18 +239,9 @@ def build_category_search_log(
     master_notice: str,
     master_rows: int,
 ) -> pd.DataFrame:
-    """One row per material per regulatory category.
-
-    This is the primary-search record the reviewer needs: it shows that every
-    substance was looked up in all five categories, and which of those lookups
-    rested on an approved rule set rather than on missing data.
-    """
+    """One row per material per regulatory category."""
     rows: list[dict] = []
     detail = cross_detail if cross_detail is not None else pd.DataFrame()
-
-    # Build the cross-regime hit counts once.  The previous implementation
-    # rescanned the complete detail table for every material and every regime,
-    # which became very slow for company inventories with 1,000+ rows.
     cross_hit_counts: dict[tuple[str, str], int] = {}
     if not detail.empty and {"material_id", "regime"}.issubset(detail.columns):
         material_ids = detail["material_id"].map(clean)
@@ -277,8 +269,8 @@ def build_category_search_log(
                 rule_rows = master_rows
                 coverage = "COVERAGE_OK" if rule_rows else "COVERAGE_NO_RULE_DATA"
                 found = (
-                    f"직접 CAS {direct}건 / 구조범위 {structural}건 / "
-                    f"복합범위 원문 {contextual}건 / 예외 CAS {excluded}건"
+                    f"직접 CAS {direct}건 / 검증 염류·구조후보 {structural}건 / "
+                    f"기준물질·복합범위 원문 {contextual}건 / 예외 CAS {excluded}건"
                 )
                 if unverified:
                     found += f" / 구조근거 미검증 {unverified}건"
@@ -409,7 +401,6 @@ def build_legal_basis(
     cross_detail: Optional[pd.DataFrame],
     master_notice: str,
 ) -> pd.DataFrame:
-    """Per-material citation table used by both the screen and the workbook."""
     rows: list[dict] = []
     if evidence is not None and not evidence.empty:
         for _, item in evidence.iterrows():
@@ -510,16 +501,13 @@ def legal_basis_gate(material_id: str, legal_basis: pd.DataFrame, is_positive: b
 
 
 def automation_basis_gate(evidence_rows: pd.DataFrame, cross_rows: pd.DataFrame) -> dict:
-    """Allow auto-confirmation only through a narrow, deterministic evidence path."""
+    """Allow auto-confirmation only through direct CAS or a validated salt relation."""
     human_positive = pd.DataFrame()
     if evidence_rows is not None and not evidence_rows.empty:
         decision_columns = [
             column for column in ("acute_decision", "chronic_decision", "eco_decision")
             if column in evidence_rows.columns
         ]
-        # Older audit fixtures do not carry category decision columns.  In that
-        # case the caller's already-established positive result and the
-        # confirmed evidence row are sufficient to evaluate the evidence path.
         positive_mask = pd.Series(not decision_columns, index=evidence_rows.index)
         for column in decision_columns:
             positive_mask |= evidence_rows[column].map(clean).eq("해당")
@@ -535,23 +523,25 @@ def automation_basis_gate(evidence_rows: pd.DataFrame, cross_rows: pd.DataFrame)
     if human_positive.empty and cross_positive.empty:
         return {"stage_status": HOLD, "code": "NO_AUTOMATABLE_POSITIVE", "detail": "자동확정 가능한 양성 근거가 없습니다."}
 
-    # Other regulatory regimes currently enter the approved engine only by
-    # direct CAS.  Their approved positive is therefore deterministic.
+    # Other regulatory regimes enter the approved engine only by direct CAS.
     if not cross_positive.empty:
         return {"stage_status": PASS, "code": "APPROVED_DIRECT_CAS_PATH", "detail": "승인 규칙의 직접 CAS 근거입니다."}
 
     for _, row in human_positive.iterrows():
         match_type = clean(row.get("match_type"))
-        scope_type = clean(row.get("scope_type"))
         if match_type == "직접 CAS":
             return {"stage_status": PASS, "code": "DIRECT_CAS_PATH", "detail": "공식 목록의 직접 CAS 근거입니다."}
-        if match_type in AUTO_CONFIRM_MATCH_TYPES and scope_type not in MANUAL_ONLY_SCOPE_TYPES:
-            return {"stage_status": PASS, "code": "APPROVED_STRUCTURE_PATH", "detail": "승인·검증된 구조범위 근거입니다."}
+        if match_type == "검증된 염류 구조":
+            return {
+                "stage_status": PASS,
+                "code": "VALIDATED_SALT_PATH",
+                "detail": "승인된 염류 규칙과 검증된 parent 구조 일치 근거입니다.",
+            }
 
     return {
         "stage_status": HOLD,
-        "code": "COMPLEX_SCOPE_MANUAL_ONLY",
-        "detail": "포괄적 염류·유도체·화합물군·혼합물·반응생성물·UVCB는 승인된 안전 경로가 없어 사람이 확인해야 합니다.",
+        "code": "NON_CORE_SCOPE_MANUAL_ONLY",
+        "detail": "직접 CAS 또는 검증된 염류 구조가 아닌 포괄 규제범위는 자동확정하지 않고 사람이 확인해야 합니다.",
     }
 
 
@@ -621,9 +611,6 @@ def apply_trust_gate(
 
     detail = cross_detail if cross_detail is not None else pd.DataFrame()
 
-    # Index the three audit tables once instead of filtering each complete
-    # DataFrame again for every inventory row.  The gate decisions themselves
-    # are unchanged; only the lookup path is different.
     def grouped_by_material(frame: Optional[pd.DataFrame]) -> dict[str, pd.DataFrame]:
         if frame is None or frame.empty or "material_id" not in frame.columns:
             return {}
@@ -657,7 +644,6 @@ def apply_trust_gate(
             "S5": legal_basis_gate(material_id, basis_rows, positive),
         }
         auto_gate = automation_basis_gate(evidence_rows, cross_rows)
-
         blocking = [code for code, res in results.items() if res["stage_status"] != PASS]
 
         if (
@@ -682,11 +668,8 @@ def apply_trust_gate(
             hold_reason = " / ".join(dict.fromkeys(reasons)) or "자동확정 요건을 모두 충족하지 못했습니다."
         elif human_hazard_review:
             # company_engine already determined the human-hazard side cannot
-            # be confirmed one way or the other (an anchor/contextual CAS
-            # reference, a missing concentration, or an invalid CAS) -- carry
-            # its own specific reason through rather than the generic
-            # cross-regime "unverified API candidate" message below, and
-            # never let this fall through to a confirmed "비해당".
+            # be confirmed one way or the other (a 기준물질/문맥상 CAS
+            # reference, a missing concentration, or an invalid CAS).
             gate_status = GATE_HOLD
             decision = {
                 "물질정보 확인 실패": "보류(물질식별 실패)",
