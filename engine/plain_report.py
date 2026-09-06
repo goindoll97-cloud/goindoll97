@@ -1,10 +1,4 @@
-"""Reader-facing regulatory screening report.
-
-The detailed audit sheets keep every intermediate signal. This module intentionally
-compresses those signals into a conservative final result: confirmed hits show only
-confirmed evidence, holds show one best candidate, and explicit exclusions always
-outrank similarity-based inclusion language.
-"""
+"""Reader-facing regulatory screening report."""
 
 from __future__ import annotations
 
@@ -51,12 +45,12 @@ READER_GUIDE_ROWS = [
     ("기준물질", "포괄 규제범위를 연결하기 위한 기준 물질 또는 기준 CAS입니다. 기준물질과의 연결만으로 규제 해당을 자동확정하지 않습니다."),
     ("포괄 규제범위 후보", "혼합물·반응생성물·화합물군·UVCB·일반 구조범위처럼 직접 CAS 또는 검증된 염류 구조만으로 확정하기 어려운 규제항목의 검토 후보입니다. 후보는 분류·검토 보조용이며 자동확정하지 않습니다."),
     ("명시적 제외", "법규 원문에서 특정 물질 또는 조건을 해당 규제범위에서 제외한다고 명시한 경우입니다. 명시적 제외조건은 이름·구조 유사성에 따른 포함 후보보다 항상 우선합니다. 다만 해당 규제항목에서 제외됐다는 사실만으로 다른 규제까지 모두 비해당으로 확정하지 않으므로 최종 결과는 보류될 수 있습니다."),
-    ("법적 근거", "판정 또는 검토 후보의 근거가 된 고시명, 지정번호, 규제항목 등 확인 가능한 법적 출처입니다."),
+    ("법적 근거", "판정 근거가 된 규제 카테고리와 고유번호를 표시합니다. 예: 「인체등유해성물질」 고유번호 97-1-102."),
     ("AI 보조검토", "AI는 포괄 규제범위 후보의 분류와 추가 확인사항 정리에만 사용합니다. AI 판단은 규제 해당·비해당 자동확정 근거로 사용하지 않습니다."),
 ]
 
 DECISION_POLICY_ROWS = [
-    ("규제 해당", "직접 CAS 일치 또는 검증된 염류 구조 일치이며 함량·조건도 충족", "확정 근거만 1~2문장으로 표시"),
+    ("규제 해당", "직접 CAS 일치 또는 검증된 염류 구조 일치이며 함량·조건도 충족", "규제 카테고리별 기준과 실제 함량을 함께 표시"),
     ("보류", "직접 CAS·검증된 염류 구조 이외의 포괄 규제범위, 정보 부족, 적용조건 확인 또는 명시적 제외 후 다른 규제 적용 여부를 추가 확인해야 하는 경우", "가장 관련성 높은 규제명 하나와 검토 필요 사유만 표시"),
     ("비해당", "확인 가능한 규제범위와 필요한 조건을 모두 검토했으나 적용 항목이 확인되지 않은 경우", "확인한 범위와 미해당 근거를 표시"),
 ]
@@ -105,14 +99,14 @@ def _match_short(row: pd.Series) -> str:
     return "검토 후보와 연결"
 
 
-def _entry_short(row: pd.Series, notice: str) -> str:
+def _entry_short(row: pd.Series) -> str:
     name = clean(row.get("regulatory_substance_name")) or clean(row.get("chemical_name"))
     designation = clean(row.get("designation_id"))
-    base = f"「{clean(row.get('notice')) or clean(notice)}」 '{name}'"
-    return f"{base}(지정번호 {designation})" if designation else base
+    base = f"「인체등유해성물질」 '{name}'"
+    return f"{base}(고유번호 {designation})" if designation else base
 
 
-def _hazard_sentences(rows: pd.DataFrame, notice: str) -> tuple[list[str], list[str], list[str]]:
+def _hazard_sentences(rows: pd.DataFrame) -> tuple[list[str], list[str], list[str]]:
     categories: list[str] = []
     sentences: list[str] = []
     citations: list[str] = []
@@ -133,11 +127,10 @@ def _hazard_sentences(rows: pd.DataFrame, notice: str) -> tuple[list[str], list[
                 below.append(f"{label} {_fmt(threshold)}% 기준 미만")
             elif decision == "함량 확인 필요":
                 pending.append(f"{label} 함량 확인 필요")
-        head = f"{_entry_short(row, notice)}와 {_match_short(row)}했습니다."
+        head = f"{_entry_short(row)}와 {_match_short(row)}했습니다."
         if positive:
-            body = "·".join(positive)
             conc = f"함량 {_fmt(concentration)}%" if np.isfinite(concentration) else "입력 함량"
-            sentences.append(f"{head} {body} 기준에 {conc}로 규제 해당입니다.")
+            sentences.append(f"{head} {'·'.join(positive)} 기준에 {conc}로 규제 해당입니다.")
         elif below:
             sentences.append(f"{head} {'·'.join(below)}입니다.")
         elif pending:
@@ -146,11 +139,23 @@ def _hazard_sentences(rows: pd.DataFrame, notice: str) -> tuple[list[str], list[
             sentences.append(f"{head} 적용 기준은 원문 확인이 필요합니다.")
         designation = clean(row.get("designation_id"))
         if designation:
-            citations.append(f"{clean(row.get('notice')) or clean(notice)} 지정번호 {designation}")
+            citations.append(f"「인체등유해성물질」 고유번호 {designation}")
     return categories, sentences, citations
 
 
-def _cross_sentences(rows: pd.DataFrame, confirmed_only: bool = False) -> tuple[list[str], list[str], list[str]]:
+def _cross_threshold(row: pd.Series) -> tuple[float, str]:
+    threshold = _number(row.get("concentration_threshold_pct"))
+    operator = clean(row.get("concentration_operator"))
+    if np.isfinite(threshold):
+        return threshold, operator or "이상"
+    text = clean(row.get("source_text"))
+    match = re.search(r"(\d+(?:\.\d+)?)\s*%\s*(이상|초과|이하|미만)?", text)
+    if match:
+        return float(match.group(1)), clean(match.group(2)) or "이상"
+    return np.nan, ""
+
+
+def _cross_sentences(rows: pd.DataFrame, concentration: float, confirmed_only: bool = False) -> tuple[list[str], list[str], list[str]]:
     categories: list[str] = []
     sentences: list[str] = []
     citations: list[str] = []
@@ -160,24 +165,37 @@ def _cross_sentences(rows: pd.DataFrame, confirmed_only: bool = False) -> tuple[
         label = REGIME_LABELS.get(clean(row.get("regime")), clean(row.get("regime_label")))
         decision = clean(row.get("decision"))
         name = clean(row.get("substance_name")) or label
-        source = clean(row.get("source_reference")) or clean(row.get("source_name"))
+        designation = clean(row.get("designation_id"))
         if confirmed_only and decision != "규제 해당":
             continue
+        threshold, operator = _cross_threshold(row)
         if decision == "규제 해당":
             categories.append(label)
-            sentences.append(f"{label} 목록에 CAS번호로 직접 등재되고 적용 조건을 충족합니다.")
-            if source:
-                citations.append(f"{label} {source}")
+            if np.isfinite(threshold) and np.isfinite(concentration):
+                sentences.append(
+                    f"「{label}」 목록에 CAS번호로 직접 등재되고 {_fmt(threshold)}% {operator} 기준에 함량 {_fmt(concentration)}%로 규제 해당입니다."
+                )
+            else:
+                sentences.append(f"「{label}」 목록에 CAS번호로 직접 등재되고 적용 조건을 충족하여 규제 해당입니다.")
+            if designation:
+                citations.append(f"「{label}」 고유번호 {designation}")
         elif decision == "해당 후보·검토 필요":
-            sentences.append(f"{label} 목록에서 같은 CAS번호가 후보로 확인되어 전문가 검토가 필요합니다.")
+            sentences.append(f"「{label}」 목록에서 같은 CAS번호가 후보로 확인되어 전문가 검토가 필요합니다.")
+            if designation:
+                citations.append(f"「{label}」 고유번호 {designation} (검토 후보)")
         elif decision == "기준 미만·조건 비충족":
-            sentences.append(f"{label} 목록에는 등재되어 있으나 적용 조건을 충족하지 않습니다.")
-            if source:
-                citations.append(f"{label} {source}")
+            if np.isfinite(threshold) and np.isfinite(concentration):
+                sentences.append(f"「{label}」 목록에는 등재되어 있으나 {_fmt(threshold)}% {operator} 기준에 함량 {_fmt(concentration)}%로 기준을 충족하지 않습니다.")
+            else:
+                sentences.append(f"「{label}」 목록에는 등재되어 있으나 적용 조건을 충족하지 않습니다.")
+            if designation:
+                citations.append(f"「{label}」 고유번호 {designation}")
         elif decision in {"추가정보 필요", "조건 검토 필요"}:
             missing = clean(row.get("missing_enterprise_fields")).replace(";", ", ")
             detail = f" 필요한 정보: {missing}." if missing else ""
-            sentences.append(f"{label} 목록의 '{name}'과 일치하지만 적용 조건 확인이 필요합니다.{detail}")
+            sentences.append(f"「{label}」 목록의 '{name}'과 일치하지만 적용 조건 확인이 필요합니다.{detail}")
+            if designation:
+                citations.append(f"「{label}」 고유번호 {designation} (검토 필요)")
     return categories, sentences, citations
 
 
@@ -253,7 +271,7 @@ def _primary_candidate(item: pd.Series) -> dict:
     }
 
 
-def _cap_reason(sentences: list[str], limit: int = 200) -> str:
+def _cap_reason(sentences: list[str], limit: int = 500) -> str:
     text = " ".join(dict.fromkeys(clean(s) for s in sentences if clean(s)))
     if len(text) <= limit:
         return text
@@ -276,6 +294,7 @@ def build_plain_summary(
     for _, item in summary.iterrows():
         material_id = clean(item.get("material_id"))
         result = _plain_result(item.get("gate_decision"), item.get("final_decision"))
+        concentration = _number(item.get("concentration_pct"))
 
         confirmed = pd.DataFrame()
         held = pd.DataFrame()
@@ -293,12 +312,12 @@ def build_plain_summary(
         sentences: list[str] = []
         citations: list[str] = []
 
-        hazard_categories, hazard_sentences, hazard_citations = _hazard_sentences(confirmed, notice)
+        hazard_categories, hazard_sentences, hazard_citations = _hazard_sentences(confirmed)
         categories += hazard_categories
         citations += hazard_citations
 
         cross_categories, cross_sentences, cross_citations = _cross_sentences(
-            cross_rows, confirmed_only=(result == "규제 해당")
+            cross_rows, concentration, confirmed_only=(result == "규제 해당")
         )
         categories += cross_categories
         citations += cross_citations
@@ -308,42 +327,36 @@ def build_plain_summary(
         candidate_name = clean(primary.get("regulatory_name")) or "복합 규제범위"
         candidate_category = _normalize_categories(primary.get("regulatory_categories"), "·")
         explicit_exclusion = bool(primary.get("explicit_exception")) or clean(primary.get("match_type")) == "EXPLICIT_EXCEPTION_CAS"
-        rule_relation = clean(item.get("llm_rule_relation"))
-        if rule_relation == "EXPLICITLY_EXCLUDED":
+        if clean(item.get("llm_rule_relation")) == "EXPLICITLY_EXCLUDED":
             explicit_exclusion = True
 
         if result == "규제 해당":
-            # Only evidence already permitted by the trust gate reaches this branch.
             sentences = hazard_sentences + cross_sentences
             if not sentences:
                 sentences = ["직접 CAS 또는 검증된 염류 구조와 적용 조건이 확인되어 규제 해당으로 확정되었습니다."]
-            sentences = sentences[:2]
 
         elif result == "비해당":
             if explicit_exclusion and candidate_id:
-                target = f"'{candidate_name}'(지정번호 {candidate_id})"
-                sentences = [f"본 물질은 {target}의 명시적 제외조건에 해당합니다."]
-                citations.append(f"{clean(notice)} 지정번호 {candidate_id} (명시적 제외)")
+                target = f"'{candidate_name}'(고유번호 {candidate_id})"
+                sentences = [f"본 물질은 「인체등유해성물질」 {target}의 명시적 제외조건에 해당합니다."]
+                citations.append(f"「인체등유해성물질」 고유번호 {candidate_id} (명시적 제외)")
             else:
                 cas = clean(item.get("input_cas"))
                 searchable = bool(cas and valid_cas_checksum(cas) and cas.replace("-", "").strip("0"))
-                if searchable:
-                    sentences = [f"「{clean(notice)}」 확인 범위에서 이 CAS번호에 적용되는 자동확정 대상 규제 항목이 확인되지 않았습니다."]
-                else:
-                    sentences = ["확인 범위에서 적용되는 자동확정 대상 규제 항목이 확인되지 않았습니다."]
+                sentences = ["확인한 규제 카테고리에서 이 CAS번호에 적용되는 자동확정 대상 규제 항목이 확인되지 않았습니다."] if searchable else ["확인 범위에서 적용되는 자동확정 대상 규제 항목이 확인되지 않았습니다."]
             categories = []
 
         else:
             if explicit_exclusion and candidate_id:
-                target = f"'{candidate_name}'(지정번호 {candidate_id})"
-                sentences = [f"본 물질은 {target}의 명시적 제외조건과 일치합니다. 다른 규제 적용 여부는 전문가 검토가 필요합니다."]
-                citations.append(f"{clean(notice)} 지정번호 {candidate_id} (명시적 제외 후보)")
+                target = f"'{candidate_name}'(고유번호 {candidate_id})"
+                sentences = [f"본 물질은 「인체등유해성물질」 {target}의 명시적 제외조건과 일치합니다. 다른 규제 적용 여부는 전문가 검토가 필요합니다."]
+                citations.append(f"「인체등유해성물질」 고유번호 {candidate_id} (명시적 제외 후보)")
             elif candidate_id or candidate_name != "복합 규제범위":
-                target = f"'{candidate_name}'" + (f"(지정번호 {candidate_id})" if candidate_id else "")
+                target = f"'{candidate_name}'" + (f"(고유번호 {candidate_id})" if candidate_id else "")
                 prefix = f"{candidate_category} " if candidate_category else ""
                 sentences = [f"본 물질은 {prefix}{target}과 관련된 포괄 규제범위 후보입니다. 자동확정하지 않고 전문가 검토가 필요합니다."]
                 if candidate_id:
-                    citations.append(f"{clean(notice)} 지정번호 {candidate_id} (검토 후보)")
+                    citations.append(f"「인체등유해성물질」 고유번호 {candidate_id} (검토 후보)")
             elif not held.empty:
                 name = clean(held.iloc[0].get("regulatory_substance_name"))
                 sentences = [f"'{name}'의 포괄 규제범위 후보이나 구조 확인이 부족해 전문가 검토가 필요합니다."]
@@ -359,12 +372,12 @@ def build_plain_summary(
                 categories = cross_categories
 
         category_text = " / ".join(dict.fromkeys(x.strip() for x in categories if x and x.strip())) or "해당 없음"
-        reason = _cap_reason(sentences, 200)
+        reason = _cap_reason(sentences, 500)
 
         rows.append({
             "물질명": clean(item.get("resolved_name")) or clean(item.get("input_chemical_name")),
             "CAS번호": clean(item.get("input_cas")),
-            "함량(%)": _number(item.get("concentration_pct")),
+            "함량(%)": concentration,
             "판정결과": result,
             "규제 카테고리": category_text,
             "판단근거": reason,
@@ -378,12 +391,12 @@ PLAIN_EVIDENCE_COLUMNS = {
     "chemical_name": "물질명",
     "cas": "CAS번호",
     "regulatory_substance_name": "규제 물질명",
-    "designation_id": "지정번호",
+    "designation_id": "고유번호",
     "match_type": "매칭 방식",
     "acute_threshold_pct": "인체급성 기준(%)",
     "chronic_threshold_pct": "인체만성 기준(%)",
     "eco_threshold_pct": "생태 기준(%)",
-    "notice": "적용 고시",
+    "notice": "규제체계",
     "source_text": "규제 원문",
 }
 
@@ -392,4 +405,7 @@ def build_plain_evidence(evidence: Optional[pd.DataFrame]) -> pd.DataFrame:
     if evidence is None or evidence.empty:
         return pd.DataFrame(columns=list(PLAIN_EVIDENCE_COLUMNS.values()))
     columns = [col for col in PLAIN_EVIDENCE_COLUMNS if col in evidence.columns]
-    return evidence[columns].rename(columns=PLAIN_EVIDENCE_COLUMNS)
+    out = evidence[columns].rename(columns=PLAIN_EVIDENCE_COLUMNS).copy()
+    if "규제체계" in out.columns:
+        out["규제체계"] = "인체등유해성물질"
+    return out
