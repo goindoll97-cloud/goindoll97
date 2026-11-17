@@ -186,6 +186,25 @@ class DesktopWindow(QMainWindow):
         form.setContentsMargins(18, 17, 18, 17)
         form.setSpacing(12)
 
+        workspace_row = QHBoxLayout()
+        workspace_label = QLabel("작업 데이터 저장 폴더")
+        workspace_label.setStyleSheet("font-weight:700;")
+        self.workspace_path = QLineEdit(str(backend.WORKSPACE_DIR))
+        self.workspace_path.setReadOnly(True)
+        self.workspace_path.setToolTip("판정 결과·PubChem 캐시·법규 API 임시파일이 모두 이 폴더에 저장됩니다.")
+        choose_workspace = QPushButton("저장 폴더 지정")
+        choose_workspace.clicked.connect(self.choose_workspace)
+        workspace_row.addWidget(workspace_label)
+        workspace_row.addWidget(self.workspace_path, 1)
+        workspace_row.addWidget(choose_workspace)
+        form.addLayout(workspace_row)
+        workspace_tip = QLabel(
+            "기본값: EXE 폴더 안의 workspace. 발표 전용 폴더를 선택하면 결과와 캐시를 한곳에 모을 수 있습니다."
+        )
+        workspace_tip.setStyleSheet("color:#5d7683;font-size:12px;")
+        workspace_tip.setWordWrap(True)
+        form.addWidget(workspace_tip)
+
         file_row = QHBoxLayout()
         label = QLabel("인벤토리 파일")
         label.setStyleSheet("font-weight:700;")
@@ -300,6 +319,33 @@ class DesktopWindow(QMainWindow):
             self.info.setText("예시 인벤토리 6건을 선택했습니다. 판정을 실행할 수 있습니다.")
         else:
             QMessageBox.warning(self, "예시파일 없음", "예시 인벤토리 파일을 찾지 못했습니다.")
+
+    def choose_workspace(self):
+        if self.thread is not None:
+            QMessageBox.warning(self, "작업 중", "현재 작업이 끝난 후 저장 위치를 변경하세요.")
+            return
+        if self.result is not None:
+            QMessageBox.warning(
+                self, "이미 판정 결과가 있습니다",
+                "저장 위치는 분석 전에 지정하세요. 이미 만들어진 결과가 "
+                "이전 위치에 남지 않도록 프로그램을 종료한 뒤 다시 열어 변경하세요."
+            )
+            return
+        target = QFileDialog.getExistingDirectory(
+            self, "발표용 작업 데이터 저장 폴더 선택",
+            str(backend.WORKSPACE_DIR.parent),
+        )
+        if not target:
+            return
+        try:
+            folder = backend.set_workspace(target)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "폴더 변경 실패", str(exc))
+            return
+        self.workspace_path.setText(str(folder))
+        self.info.setText(
+            f"작업 데이터 저장 위치: {folder}  |  기존 파일이 있는 폴더는 삭제 전에 반드시 확인하세요."
+        )
 
     def _api_option_changed(self, enabled: bool):
         if self.catalog is not None and enabled != self.catalog_online:
@@ -453,8 +499,10 @@ class DesktopWindow(QMainWindow):
         if not self.result:
             return
         preferred = self.result["saved"]["file_name"]
+        backend.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         target, _ = QFileDialog.getSaveFileName(
-            self, "Excel 결과 저장", str(Path.home() / "Desktop" / preferred),
+            self, "Excel 결과 저장",
+            str(backend.RESULTS_DIR / preferred),
             "Excel Workbook (*.xlsx)"
         )
         if not target:
