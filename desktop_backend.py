@@ -271,6 +271,7 @@ def screen_inventory(
             str(k): int(v) for k, v in summary["gate_decision"].value_counts().items()
         },
         directory=RESULTS_DIR,
+        filename_prefix="사업장_화학물질_규제판정",
     )
     result["workbook"] = workbook
     result["saved"] = saved
@@ -320,5 +321,6 @@ def rerun_ai(result: dict, progress: Progress) -> dict:
             for k, v in result["summary"]["gate_decision"].value_counts().items()
         },
         directory=RESULTS_DIR,
+        filename_prefix="사업장_화학물질_규제판정",
     )
     return result

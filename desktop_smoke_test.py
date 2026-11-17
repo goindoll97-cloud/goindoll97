@@ -31,6 +31,7 @@ def main():
             use_local_ai=False, detailed=False, progress=log,
         )
         assert len(result["summary"]) == 6
+        assert result["saved"]["file_name"].startswith("사업장_화학물질_규제판정_")
         assert result["saved"]["file_name"].endswith(".xlsx")
         assert Path(result["saved"]["path"]).is_file()
         assert Path(result["saved"]["path"]).parent == backend.RESULTS_DIR

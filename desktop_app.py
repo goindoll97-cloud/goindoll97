@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Callable
 
 import pandas as pd
-from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QThread, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QFont
+from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QThread, QUrl, Signal, Slot, QRectF
+from PySide6.QtGui import QDesktopServices, QFont, QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -53,8 +53,57 @@ QHeaderView::section {background:#eaf2f6;padding:7px;border:1px solid #dce8ef;}
 QProgressBar {border:1px solid #d6e4ea;border-radius:6px;text-align:center;
               background:#e9f0f3;min-height:15px;}
 QProgressBar::chunk {background:#2a7f76;border-radius:5px;}
-QCheckBox {spacing:9px;}
 """
+
+
+class ToggleSwitch(QCheckBox):
+    """An accessible, checkable native Qt ON/OFF slider control."""
+
+    def __init__(self, label: str, parent=None):
+        super().__init__(parent)
+        self.setAccessibleName(label)
+        self.setToolTip(f"{label}: 클릭하여 켜거나 끕니다.")
+        self.setFixedSize(78, 34)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setTristate(False)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        active = self.isChecked()
+        enabled = self.isEnabled()
+        painter.setBrush(
+            QColor("#287e74" if active else "#a8b7c1")
+            if enabled else QColor("#d4dce1")
+        )
+        painter.drawRoundedRect(QRectF(1, 3, 76, 28), 14, 14)
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(QRectF(52 if active else 5, 7, 20, 20))
+        painter.setPen(QColor("#ffffff" if enabled else "#77858e"))
+        font = QFont("Segoe UI", 9)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(5, 3, 43, 28) if active else QRectF(28, 3, 46, 28),
+            Qt.AlignmentFlag.AlignCenter,
+            "ON" if active else "OFF",
+        )
+        painter.end()
+
+
+def toggle_option(label: str, switch: ToggleSwitch) -> QWidget:
+    """Pair a full descriptive label with a right-aligned switch."""
+    container = QWidget()
+    layout = QHBoxLayout(container)
+    layout.setContentsMargins(0, 5, 0, 5)
+    layout.setSpacing(12)
+    text = QLabel(label)
+    text.setWordWrap(True)
+    text.setBuddy(switch)
+    layout.addWidget(text, 1)
+    layout.addWidget(switch, 0, Qt.AlignmentFlag.AlignRight)
+    return container
 
 
 class DataFrameModel(QAbstractTableModel):
@@ -158,7 +207,7 @@ class DesktopWindow(QMainWindow):
         self.current_task = None
         self.catalog_online = None
 
-        self.setWindowTitle("기업 화학물질 규제 판정 시스템")
+        self.setWindowTitle("사업장 화학물질 규제 판정 시스템")
         self.resize(1350, 850)
         self.setMinimumSize(900, 620)
         self.setStyleSheet(STYLE)
@@ -172,7 +221,7 @@ class DesktopWindow(QMainWindow):
         hero.setObjectName("hero")
         hero_layout = QVBoxLayout(hero)
         hero_layout.setContentsMargins(24, 20, 24, 20)
-        title = QLabel("기업 화학물질 규제 판정 시스템")
+        title = QLabel("사업장 화학물질 규제 판정 시스템")
         title.setStyleSheet("font-size:25px;font-weight:800;")
         subtitle = QLabel("승인된 규제 규칙을 바탕으로 물질 식별과 국내 화학물질 규제를 확인합니다.")
         subtitle.setStyleSheet("font-size:13px;color:#dceef4;")
@@ -198,13 +247,6 @@ class DesktopWindow(QMainWindow):
         workspace_row.addWidget(self.workspace_path, 1)
         workspace_row.addWidget(choose_workspace)
         form.addLayout(workspace_row)
-        workspace_tip = QLabel(
-            "기본값: EXE 폴더 안의 workspace. 발표 전용 폴더를 선택하면 결과와 캐시를 한곳에 모을 수 있습니다."
-        )
-        workspace_tip.setStyleSheet("color:#5d7683;font-size:12px;")
-        workspace_tip.setWordWrap(True)
-        form.addWidget(workspace_tip)
-
         file_row = QHBoxLayout()
         label = QLabel("인벤토리 파일")
         label.setStyleSheet("font-weight:700;")
@@ -221,20 +263,22 @@ class DesktopWindow(QMainWindow):
         form.addLayout(file_row)
 
         option_grid = QGridLayout()
-        option_grid.setHorizontalSpacing(22)
+        option_grid.setHorizontalSpacing(36)
         option_grid.setVerticalSpacing(8)
-        self.pubchem_toggle = QCheckBox("누락 SMILES를 PubChem에서 자동 수집")
+        option_grid.setColumnStretch(0, 1)
+        option_grid.setColumnStretch(1, 1)
+        self.pubchem_toggle = ToggleSwitch("누락 SMILES를 PubChem에서 자동 수집")
         self.pubchem_toggle.setChecked(True)
-        self.ai_toggle = QCheckBox("어려운 보류 사례만 로컬 AI 자동검토 (ON/OFF)")
+        self.ai_toggle = ToggleSwitch("어려운 보류 사례만 로컬 AI 자동검토")
         self.ai_toggle.setEnabled(False)
-        self.detail_toggle = QCheckBox("Excel 결과에 상세 감사자료 포함")
-        self.law_toggle = QCheckBox("공식 법규 API 최신성 확인 (인터넷)")
+        self.detail_toggle = ToggleSwitch("Excel 결과에 상세 감사자료 포함")
+        self.law_toggle = ToggleSwitch("공식 법규 API 최신성 확인 (인터넷)")
         self.law_toggle.setChecked(bool(get_api_credential()[0]))
         self.law_toggle.toggled.connect(self._api_option_changed)
-        option_grid.addWidget(self.pubchem_toggle, 0, 0)
-        option_grid.addWidget(self.ai_toggle, 0, 1)
-        option_grid.addWidget(self.detail_toggle, 1, 0)
-        option_grid.addWidget(self.law_toggle, 1, 1)
+        option_grid.addWidget(toggle_option("누락 SMILES를 PubChem에서 자동 수집", self.pubchem_toggle), 0, 0)
+        option_grid.addWidget(toggle_option("어려운 보류 사례만 로컬 AI 자동검토", self.ai_toggle), 0, 1)
+        option_grid.addWidget(toggle_option("Excel 결과에 상세 감사자료 포함", self.detail_toggle), 1, 0)
+        option_grid.addWidget(toggle_option("공식 법규 API 최신성 확인 (인터넷)", self.law_toggle), 1, 1)
         form.addLayout(option_grid)
         self.ai_status = QLabel("로컬 AI 상태: 확인 중 (모델 미설치 시 OFF 상태로 유지)")
         self.ai_status.setStyleSheet("color:#5d7683;")
@@ -291,14 +335,9 @@ class DesktopWindow(QMainWindow):
             self.tabs.addTab(table, name)
         outer.addWidget(self.tabs, 1)
 
-        footer = QHBoxLayout()
-        disclaimer = QLabel("※ 최신 법규 미확인·보류 결과는 비규제 확정이 아닙니다. 허가물질은 판정 범위에 포함되지 않습니다.")
-        disclaimer.setStyleSheet("color:#9b5a19;font-size:12px;")
-        footer.addWidget(disclaimer, 1)
         open_results = QPushButton("결과 폴더 열기")
         open_results.clicked.connect(self.open_results)
-        footer.addWidget(open_results)
-        outer.addLayout(footer)
+        outer.addWidget(open_results, 0, Qt.AlignmentFlag.AlignRight)
 
         self.setCentralWidget(root)
         self.statusBar().showMessage("규제 데이터를 불러오는 중...")
@@ -532,7 +571,7 @@ class DesktopWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("기업 화학물질 규제 판정 시스템")
+    app.setApplicationName("사업장 화학물질 규제 판정 시스템")
     app.setStyle("Fusion")
     app.setFont(QFont("Malgun Gothic", 10))
     window = DesktopWindow()

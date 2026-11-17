@@ -33,6 +33,7 @@ def save_result_workbook(
     api_status: Optional[dict] = None,
     gate_counts: Optional[dict] = None,
     directory: Path = RESULTS_DIR,
+    filename_prefix: str = "기업_화학물질_규제판정",
 ) -> dict:
     """Persist one workbook and append an audit line to the run manifest."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -42,7 +43,7 @@ def save_result_workbook(
     # Human-readable local time makes repeated runs distinguishable in the
     # sidebar without forcing Korean users to convert a UTC compact stamp.
     stamp = now_kst.strftime("%Y-%m-%d_%H-%M-%S_KST")
-    name = f"기업_화학물질_규제판정_{_safe(master_notice) or 'unknown'}_{stamp}.xlsx"
+    name = f"{_safe(filename_prefix) or '화학물질_규제판정'}_{_safe(master_notice) or 'unknown'}_{stamp}.xlsx"
     path = directory / name
     suffix = 1
     while path.exists():  # never overwrite an already delivered result

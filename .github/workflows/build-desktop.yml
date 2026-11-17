@@ -7,6 +7,7 @@ on:
       - "desktop_app.py"
       - "desktop_backend.py"
       - "desktop_smoke_test.py"
+      - "engine/result_store.py"
       - "desktop.spec"
       - "build_desktop.bat"
       - "requirements-desktop.txt"
