@@ -193,8 +193,11 @@ class DesktopWindow(QMainWindow):
         self.file_path.setPlaceholderText("CSV 또는 Excel 파일을 선택하세요.")
         choose = QPushButton("파일 찾기")
         choose.clicked.connect(self.choose_file)
+        example = QPushButton("예시파일 선택")
+        example.clicked.connect(self.choose_example_file)
         file_row.addWidget(label)
         file_row.addWidget(self.file_path, 1)
+        file_row.addWidget(example)
         file_row.addWidget(choose)
         form.addLayout(file_row)
 
@@ -289,6 +292,14 @@ class DesktopWindow(QMainWindow):
         )
         if path:
             self.file_path.setText(path)
+
+    def choose_example_file(self):
+        example = backend.company.DATA_DIR / "sample_company_inventory.csv"
+        if example.is_file():
+            self.file_path.setText(str(example))
+            self.info.setText("예시 인벤토리 6건을 선택했습니다. 판정을 실행할 수 있습니다.")
+        else:
+            QMessageBox.warning(self, "예시파일 없음", "예시 인벤토리 파일을 찾지 못했습니다.")
 
     def _api_option_changed(self, enabled: bool):
         if self.catalog is not None and enabled != self.catalog_online:
