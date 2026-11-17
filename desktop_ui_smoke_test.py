@@ -16,7 +16,6 @@ def main():
     labels = (
         "누락 SMILES를 PubChem에서 자동 수집",
         "어려운 보류 사례만 로컬 AI 자동검토",
-        "Excel 결과에 상세 감사자료 포함",
         "공식 법규 API 최신성 확인 (인터넷)",
     )
     for label in labels:
@@ -74,6 +73,10 @@ def main():
     DesktopWindow.load_catalog = lambda self: None
     try:
         window = DesktopWindow()
+        configured_switches = window.findChildren(ToggleSwitch)
+        assert len(configured_switches) == 3, "Only PubChem, AI and law API switches remain"
+        assert all("상세 감사자료" not in switch.accessibleName() for switch in configured_switches)
+        assert not hasattr(window, "detail_toggle")
         assert not window.findChildren(QTabWidget), "Only one result table should be visible"
         assert window.findChildren(QTableView) == [window.result_table]
         assert window.result_table.objectName() == "judgementResults"

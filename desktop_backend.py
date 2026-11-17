@@ -152,7 +152,8 @@ def _overall(row: pd.Series) -> str:
     return "확인 범위 내 비해당"
 
 
-def _create_workbook(result: dict, detailed: bool) -> bytes:
+def _create_workbook(result: dict) -> bytes:
+    """Always include complete regulatory audit sheets in desktop Excel files."""
     summary = result["summary"]
     return build_result_workbook(
         summary,
@@ -177,13 +178,13 @@ def _create_workbook(result: dict, detailed: bool) -> bytes:
         category_log=result["category_log"],
         legal_basis=result["legal_basis"],
         no_cas_candidates=result["no_cas_candidates"],
-        detailed=detailed,
+        detailed=True,
     )
 
 
 def screen_inventory(
     catalog: dict, source: str, fetch_pubchem: bool,
-    use_local_ai: bool, detailed: bool, progress: Progress,
+    use_local_ai: bool, progress: Progress,
 ) -> dict:
     progress("인벤토리 Excel/CSV 파일을 불러오는 중...")
     raw = read_inventory(None, default_path=Path(source))
@@ -259,11 +260,10 @@ def screen_inventory(
         "plain": build_plain_summary(
             summary, evidence, cross_detail, catalog["notice"]
         ),
-        "detailed": detailed,
     }
 
     progress("판정 결과 Excel 파일을 생성하고 저장하는 중...")
-    workbook = _create_workbook(result, detailed)
+    workbook = _create_workbook(result)
     saved = save_result_workbook(
         workbook, catalog["notice"], len(summary),
         api_status=catalog["api_status"],
@@ -312,7 +312,7 @@ def rerun_ai(result: dict, progress: Progress) -> dict:
         result["cross_detail"], result["catalog"]["notice"]
     )
     progress("재검토 결과 Excel 파일 저장 중...")
-    result["workbook"] = _create_workbook(result, result["detailed"])
+    result["workbook"] = _create_workbook(result)
     result["saved"] = save_result_workbook(
         result["workbook"], result["catalog"]["notice"], len(result["summary"]),
         api_status=result["catalog"]["api_status"],

@@ -1,8 +1,11 @@
 """Offline, no-AI integration smoke test. Run before creating a Windows EXE."""
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 import desktop_backend as backend
 
@@ -28,7 +31,7 @@ def main():
         assert catalog["api_status"]["sync_status"] != "CURRENT"
         result = backend.screen_inventory(
             catalog, str(source), fetch_pubchem=False,
-            use_local_ai=False, detailed=False, progress=log,
+            use_local_ai=False, progress=log,
         )
         assert len(result["summary"]) == 6
         assert result["saved"]["file_name"].startswith("사업장_화학물질_규제판정_")
@@ -36,7 +39,21 @@ def main():
         assert Path(result["saved"]["path"]).is_file()
         assert Path(result["saved"]["path"]).parent == backend.RESULTS_DIR
         assert result["workbook"][:2] == b"PK"
-    print("PASS: portable selected workspace, offline/no-AI screening, Excel export")
+        # Audit sheets are always included, including when running offline/AI OFF.
+        with ZipFile(BytesIO(result["workbook"])) as archive:
+            workbook_xml = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+            ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+            sheet_names = {sheet.attrib["name"] for sheet in workbook_xml.iter(f"{ns}sheet")}
+            required = {
+                "판정결과", "상세판정요약", "신뢰게이트", "카테고리검색기록",
+                "법률근거", "규제근거", "물질식별", "PubChem조회기록",
+                "규제체계별판정", "타법규근거", "법규API상태",
+            }
+            assert required.issubset(sheet_names), (
+                f"Missing detailed audit sheets: {required - sheet_names}"
+            )
+        assert Path(result["saved"]["path"]).read_bytes() == result["workbook"]
+    print("PASS: portable workspace, offline/AI-OFF screening, full audit Excel always exported")
 
 
 if __name__ == "__main__":

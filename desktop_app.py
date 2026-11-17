@@ -292,14 +292,12 @@ class DesktopWindow(QMainWindow):
         self.pubchem_toggle.setChecked(True)
         self.ai_toggle = ToggleSwitch("어려운 보류 사례만 로컬 AI 자동검토")
         self.ai_toggle.setEnabled(False)
-        self.detail_toggle = ToggleSwitch("Excel 결과에 상세 감사자료 포함")
         self.law_toggle = ToggleSwitch("공식 법규 API 최신성 확인 (인터넷)")
         self.law_toggle.setChecked(bool(get_api_credential()[0]))
         self.law_toggle.toggled.connect(self._api_option_changed)
         option_grid.addWidget(toggle_option("누락 SMILES를 PubChem에서 자동 수집", self.pubchem_toggle), 0, 0)
         option_grid.addWidget(toggle_option("어려운 보류 사례만 로컬 AI 자동검토", self.ai_toggle), 0, 1)
-        option_grid.addWidget(toggle_option("Excel 결과에 상세 감사자료 포함", self.detail_toggle), 1, 0)
-        option_grid.addWidget(toggle_option("공식 법규 API 최신성 확인 (인터넷)", self.law_toggle), 1, 1)
+        option_grid.addWidget(toggle_option("공식 법규 API 최신성 확인 (인터넷)", self.law_toggle), 1, 0)
         form.addLayout(option_grid)
         self.ai_status = QLabel("로컬 AI 상태: 확인 중 (모델 미설치 시 OFF 상태로 유지)")
         self.ai_status.setStyleSheet("color:#5d7683;")
@@ -527,7 +525,7 @@ class DesktopWindow(QMainWindow):
         self._start(
             "screen", backend.screen_inventory,
             (self.catalog, str(source), self.pubchem_toggle.isChecked(),
-             self.ai_toggle.isChecked(), self.detail_toggle.isChecked())
+             self.ai_toggle.isChecked())
         )
 
     def retry_ai(self):

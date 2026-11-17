@@ -47,7 +47,7 @@ def main():
         catalog["api_status"] = before
         result = backend.screen_inventory(
             catalog, str(source), fetch_pubchem=False, use_local_ai=False,
-            detailed=True, progress=lambda _message: None,
+            progress=lambda _message: None,
         )
         plain = result["plain"].set_index("CAS번호")
         summary = result["summary"].set_index("input_cas")
