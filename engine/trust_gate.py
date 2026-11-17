@@ -562,7 +562,7 @@ def law_version_gate(api_status: dict) -> dict:
             "code": "LAW_VERSION_FUTURE_NOTICE",
             "detail": (
                 f"공식 고시 {clean(api_status.get('official_notice'))}호는 "
-                f"{clean(api_status.get('effective_date'))} 시행 예정입니다. "
+                f"{clean(api_status.get('effective_date_iso')) or clean(api_status.get('effective_date'))} 시행 예정입니다. "
                 "시행 전 고시를 현행 규칙으로 적용하지 않았으며, 현재 유효한 고시 이력은 별도 검증해야 합니다."
             ),
         }

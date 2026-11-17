@@ -165,11 +165,11 @@ def check_latest_notice(timeout: int = 45) -> dict:
 def _effective_date(value: Any) -> date | None:
     """Parse effective dates supplied by law.go.kr (YYYYMMDD or ISO date)."""
     raw = _clean(value)
-    digits = re.fullmatch(r"(20\\d{2})(\\d{2})(\\d{2})", raw)
+    digits = re.fullmatch(r"(20\d{2})(\d{2})(\d{2})", raw)
     try:
         if digits:
             return date(int(digits[1]), int(digits[2]), int(digits[3]))
-        if re.match(r"^20\\d{2}-\\d{2}-\\d{2}", raw):
+        if re.match(r"^20\d{2}-\d{2}-\d{2}", raw):
             return date.fromisoformat(raw[:10])
     except ValueError:
         return None
@@ -196,6 +196,7 @@ def compare_with_master(
     out["reference_date"] = reference_date.isoformat()
     official = _clean(out.get("official_notice"))
     effective = _effective_date(out.get("effective_date"))
+    out["effective_date_iso"] = effective.isoformat() if effective else ""
     if out.get("status") != "FOUND" or not official:
         out["sync_status"] = "UNVERIFIED"
         out["sync_status_ko"] = "최신 여부 확인 불가"

@@ -598,7 +598,7 @@ def build_result_workbook(
             else "법규 버전 결과는 승인 규칙 기반 판정과 별도로 검토해야 합니다."
         )},
         {"항목": "공식 최신 고시", "값": api_status.get("official_notice", "")},
-        {"항목": "공식 시행일", "값": api_status.get("effective_date", "")},
+        {"항목": "공식 시행일", "값": api_status.get("effective_date_iso") or api_status.get("effective_date", "")},
         {"항목": "API 확인시각(UTC)", "값": api_status.get("checked_at_utc", "")},
         {"항목": "핵심 자동판정 범위", "값": "직접 CAS 일치 및 승인·검증된 '~와 그 염류' 구조 일치"},
         {"항목": "자동 확정 조건", "값": "직접 CAS 또는 검증된 염류 구조이며 최신 법규·함량조건·지정번호·규제원문·공식출처가 모두 확인된 경우에만 자동 확정합니다. 승인 규칙상 해당은 최종 법적 확정과 구분합니다."},
