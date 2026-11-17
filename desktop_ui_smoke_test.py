@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from desktop_app import ToggleSwitch, toggle_option
 
@@ -21,13 +23,29 @@ def main():
         assert widget.isCheckable()
         assert not widget.isChecked()
         assert widget.accessibleName() == label
+        widget.show()
+        app.processEvents()
         assert not widget.grab().isNull()
+
+        # Both ends of the drawn track MUST respond to a real mouse click.
+        # This tests the failure that a property-only smoke test missed.
+        for pos, expected in (
+            (QPoint(67, 17), True),
+            (QPoint(9, 17), False),
+            (QPoint(39, 17), True),
+        ):
+            QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=pos)
+            assert widget.isChecked() is expected, (
+                f"{label}: clicking the painted slider at {pos} failed"
+            )
         widget.setChecked(True)
         assert widget.isChecked()
         assert not widget.grab().isNull()
         widget.setChecked(False)
         widget.setEnabled(False)
         assert not widget.isChecked()
+        QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=QPoint(67, 17))
+        assert not widget.isChecked(), "Disabled switch must remain OFF"
         assert not widget.grab().isNull()
         row = toggle_option(label, widget)
         assert row.layout().count() == 2

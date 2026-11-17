@@ -67,6 +67,14 @@ class ToggleSwitch(QCheckBox):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setTristate(False)
 
+    def hitButton(self, pos):
+        """Treat the entire painted 78px slider as a clickable control.
+
+        QCheckBox's default hit zone is only the hidden native indicator,
+        which does not match the width of our custom painted switch.
+        """
+        return self.rect().contains(pos)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
