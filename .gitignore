@@ -1,0 +1,10 @@
+# Never check private API credentials into Git
+.env
+**/.env
+
+# Python and PyInstaller build output
+__pycache__/
+*.py[cod]
+build/
+dist/
+workspace/

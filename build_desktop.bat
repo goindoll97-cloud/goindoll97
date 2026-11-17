@@ -24,7 +24,7 @@ echo Build complete:
 echo   dist\ChemicalRegulatoryDesktop\ChemicalRegulatoryDesktop.exe
 echo.
 echo Copy the ENTIRE dist\ChemicalRegulatoryDesktop folder to the presentation PC.
-echo Keep API credentials in a separate .env file next to the EXE, if needed.
+echo A blank .env template was included next to the EXE for LAW_OC setup.
 echo Do not upload .env to GitHub.
 pause
 exit /b 0

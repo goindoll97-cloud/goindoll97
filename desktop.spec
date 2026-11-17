@@ -2,6 +2,7 @@
 """Build a self-contained Windows desktop EXE (folder distribution)."""
 
 from pathlib import Path
+import shutil
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 ROOT = Path(SPECPATH)
@@ -43,3 +44,11 @@ coll = COLLECT(
     upx=False,
     name="ChemicalRegulatoryDesktop",
 )
+
+
+# Ship an EMPTY API credential file beside the EXE (never a real key).
+# Reading .env in this location is already supported by regulatory_api.py.
+# Respect --distpath and never replace an existing file at this stage.
+env_target = Path(DISTPATH) / "ChemicalRegulatoryDesktop" / ".env"
+if not env_target.exists():
+    shutil.copyfile(ROOT / "law_api.env.example", env_target)

@@ -10,6 +10,7 @@ on:
       - "desktop_ui_smoke_test.py"
       - "engine/result_store.py"
       - "desktop.spec"
+      - "law_api.env.example"
       - "build_desktop.bat"
       - "requirements-desktop.txt"
       - ".github/workflows/build-desktop.yml"
@@ -51,10 +52,23 @@ jobs:
       - name: Build standalone Windows application
         run: python -m PyInstaller --noconfirm --clean desktop.spec
 
+
+      - name: Verify empty API credential template beside EXE
+        shell: pwsh
+        run: |
+          $exe = 'dist/ChemicalRegulatoryDesktop/ChemicalRegulatoryDesktop.exe'
+          $envFile = 'dist/ChemicalRegulatoryDesktop/.env'
+          if (!(Test-Path -LiteralPath $exe)) { throw 'EXE missing' }
+          if (!(Test-Path -LiteralPath $envFile)) { throw '.env not packaged next to EXE' }
+          $lines = @(Get-Content -LiteralPath $envFile -Encoding utf8)
+          if ($lines.Count -lt 1 -or $lines[0] -ne 'LAW_OC=') { throw '.env template must start with an empty LAW_OC=' }
+          Write-Host 'PASS: blank .env is present next to the executable'
+
       - name: Publish Windows application folder
         uses: actions/upload-artifact@v4
         with:
           name: ChemicalRegulatoryDesktop-Windows
           path: dist/ChemicalRegulatoryDesktop/
           if-no-files-found: error
+          include-hidden-files: true
           compression-level: 6
