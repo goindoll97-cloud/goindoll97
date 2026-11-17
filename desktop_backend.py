@@ -17,11 +17,18 @@ ENGINE_DIR = BUNDLE_DIR / "engine" if (BUNDLE_DIR / "engine").exists() else APP_
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
-# Keep generated files and API payloads outside the frozen/read-only application.
-USER_HOME = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "ChemicalRegulatoryDesktop"
-RESULTS_DIR = USER_HOME / "results"
-CACHE_DIR = USER_HOME / "cache"
-PENDING_DIR = USER_HOME / "pending_updates"
+# Portable by default: EXE folder/workspace contains the app's generated data.
+# The user may choose another dedicated folder for the current session.
+# Never write to LOCALAPPDATA by default.
+EXECUTABLE_DIR = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else APP_DIR
+)
+WORKSPACE_DIR = EXECUTABLE_DIR / "workspace"
+RESULTS_DIR = WORKSPACE_DIR / "results"
+CACHE_DIR = WORKSPACE_DIR / "cache"
+PENDING_DIR = WORKSPACE_DIR / "pending_updates"
 
 import company_engine as company
 import cross_regime
@@ -53,11 +60,35 @@ from trust_gate import (
     cross_rule_availability,
 )
 
-company.DEFAULT_CACHE = CACHE_DIR / "pubchem_structure_cache.csv"
-cross_regime.PENDING_DIR = PENDING_DIR / "cross_regime"
-regulatory_api.PENDING_DIR = PENDING_DIR
-
 Progress = Callable[[str], None]
+
+
+def set_workspace(directory: str | Path) -> Path:
+    """Set all desktop-generated file paths; call only while no worker runs.
+
+    Creates an exclusive throwaway test file to verify write permissions.
+    It does not delete or overwrite existing files.
+    """
+    global WORKSPACE_DIR, RESULTS_DIR, CACHE_DIR, PENDING_DIR
+    import tempfile
+
+    proposed = Path(directory).expanduser().resolve()
+    proposed.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryFile(dir=proposed):
+        pass
+
+    WORKSPACE_DIR = proposed
+    RESULTS_DIR = proposed / "results"
+    CACHE_DIR = proposed / "cache"
+    PENDING_DIR = proposed / "pending_updates"
+    company.DEFAULT_CACHE = CACHE_DIR / "pubchem_structure_cache.csv"
+    cross_regime.PENDING_DIR = PENDING_DIR / "cross_regime"
+    regulatory_api.PENDING_DIR = PENDING_DIR
+    return WORKSPACE_DIR
+
+
+# Set dependent module paths without eagerly creating any files.
+set_workspace(WORKSPACE_DIR)
 
 
 def notice_status_offline() -> dict:
