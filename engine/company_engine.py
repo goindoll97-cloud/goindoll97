@@ -532,6 +532,7 @@ SUMMARY_KO = {
     "hh_direct_hits": "인체유해성 직접CAS 일치", "hh_structure_hits": "인체유해성 검증 구조 일치",
     "hh_structure_unverified_hits": "구조근거 미검증 후보", "hh_contextual_hits": "기준물질·포괄범위 원문 검색",
     "hh_excluded_hits": "예외 CAS 검색", "gate_status": "신뢰게이트 결과", "gate_decision": "게이트 판정",
+    "rule_based_decision": "승인 규칙 기반 판정",
     "gate_hold_reason": "보류 사유", "legal_basis_summary": "법률근거 검증", "coverage_summary": "카테고리 커버리지",
     "law_version_status": "법규 버전 상태", "pubchem_record_url": "PubChem 근거", "match_type": "규제 매칭 방식",
     "scope_type": "규제범위 유형", "designation_id": "지정번호", "matched_regulatory_name": "규제 물질명",
@@ -590,11 +591,17 @@ def build_result_workbook(
         {"항목": "승인 규칙 행 수", "값": master_rows},
         {"항목": "법규 API 상태", "값": api_status.get("status_ko", "확인하지 않음")},
         {"항목": "법규 동기화 상태", "값": api_status.get("sync_status_ko", "확인하지 않음")},
+        {"항목": "버전 비교 기준일(KST)", "값": api_status.get("reference_date", "")},
+        {"항목": "법규 버전 해석", "값": (
+            "후속 고시가 시행 전이며 현행 승인본의 법적 유효성은 별도로 확인해야 합니다."
+            if api_status.get("sync_status") == "FUTURE_NOTICE"
+            else "법규 버전 결과는 승인 규칙 기반 판정과 별도로 검토해야 합니다."
+        )},
         {"항목": "공식 최신 고시", "값": api_status.get("official_notice", "")},
         {"항목": "공식 시행일", "값": api_status.get("effective_date", "")},
         {"항목": "API 확인시각(UTC)", "값": api_status.get("checked_at_utc", "")},
         {"항목": "핵심 자동판정 범위", "값": "직접 CAS 일치 및 승인·검증된 '~와 그 염류' 구조 일치"},
-        {"항목": "자동 확정 조건", "값": "직접 CAS 또는 검증된 염류 구조이며 최신 법규·함량조건·지정번호·규제원문·공식출처가 모두 확인된 경우에만 자동 확정합니다."},
+        {"항목": "자동 확정 조건", "값": "직접 CAS 또는 검증된 염류 구조이며 최신 법규·함량조건·지정번호·규제원문·공식출처가 모두 확인된 경우에만 자동 확정합니다. 승인 규칙상 해당은 최종 법적 확정과 구분합니다."},
         {"항목": "포괄 범위 안전원칙", "값": "혼합물·반응생성물·화합물군·UVCB·일반 구조범위·기준물질 CAS 연결·이름 유사성은 분류와 검토 보조에만 사용하고 자동 확정하지 않습니다."},
         {"항목": "염류 구조 요건", "값": "염류 자동 확정은 PubChem 정확 CAS 동의어 구조 또는 그 구조와 연결성이 일치한 사용자 SMILES에만 허용합니다."},
         {"항목": "주의", "값": "확인 범위 내 비해당은 모든 국내 화학규제의 절대적 비규제를 의미하지 않습니다."},

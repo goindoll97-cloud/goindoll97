@@ -32,12 +32,16 @@ PLAIN_COLUMNS = [
     "함량(%)",
     "판정결과",
     "규제 카테고리",
+    "검토 후보 카테고리",
+    "검증 상태",
     "판단근거",
+    "추가 확인사항",
     "법적 근거",
 ]
 
 READER_GUIDE_ROWS = [
     ("규제 해당", "공식 규제목록의 CAS번호와 직접 일치하거나, 사전 승인된 '~와 그 염류' 규칙에서 검증된 염류 구조로 확인되고 적용 함량·조건도 충족한 경우입니다."),
+    ("승인 규칙상 해당", "저장된 승인 규칙에서 직접 CAS 또는 검증된 염류 구조와 해당 기준이 확인되었으나 현행 고시나 별도 검증 조건이 남아 있어 최종 자동확정은 보류된 경우입니다."),
     ("보류", "규제 비해당을 의미하지 않습니다. 혼합물·반응생성물·화합물군·UVCB·일반 구조범위·기준물질 CAS 연결·이름 유사성·명시적 제외조건·자료 부족 등 사람이 추가로 확인해야 할 사항이 있는 경우입니다."),
     ("비해당", "현재 앱이 확인하는 규제범위와 필요한 조건을 모두 검토한 결과 적용되는 규제항목이 확인되지 않은 경우입니다. 국내 모든 법률에서 비규제라는 의미는 아닙니다."),
     ("직접 CAS 일치", "회사 물질의 CAS번호가 공식 규제목록에 직접 등재된 CAS번호와 일치하는 경우입니다. 자동확정이 가능한 핵심 경로입니다."),
@@ -51,6 +55,7 @@ READER_GUIDE_ROWS = [
 
 DECISION_POLICY_ROWS = [
     ("규제 해당", "직접 CAS 일치 또는 검증된 염류 구조 일치이며 함량·조건도 충족", "규제 카테고리별 기준과 실제 함량을 함께 표시"),
+    ("승인 규칙상 해당", "승인 규칙에서 자동화 가능한 양성 근거가 확인되지만 법규 현행성 또는 추가 검증이 남음", "규칙상 해당 근거와 검증 상태를 별도 열에 표시"),
     ("보류", "직접 CAS·검증된 염류 구조 이외의 포괄 규제범위, 정보 부족, 적용조건 확인 또는 명시적 제외 후 다른 규제 적용 여부를 추가 확인해야 하는 경우", "가장 관련성 높은 규제명 하나와 검토 필요 사유만 표시"),
     ("비해당", "확인 가능한 규제범위와 필요한 조건을 모두 검토했으나 적용 항목이 확인되지 않은 경우", "확인한 범위와 미해당 근거를 표시"),
 ]
@@ -73,10 +78,12 @@ def _fmt(value: Any) -> str:
     return f"{number:g}" if np.isfinite(number) else ""
 
 
-def _plain_result(gate_decision: str, final_decision: str) -> str:
+def _plain_result(gate_decision: str, final_decision: str, rule_based_decision: str = "") -> str:
     gate = clean(gate_decision)
     if gate == "규제 해당(자동 확정)":
         return "규제 해당"
+    if clean(rule_based_decision) == "승인 규칙상 해당":
+        return "승인 규칙상 해당"
     if gate == "확인 범위 내 비해당":
         return "비해당"
     return "보류"
@@ -310,7 +317,11 @@ def build_plain_summary(
     rows: list[dict] = []
     for _, item in summary.iterrows():
         material_id = clean(item.get("material_id"))
-        result = _plain_result(item.get("gate_decision"), item.get("final_decision"))
+        result = _plain_result(
+            item.get("gate_decision"),
+            item.get("final_decision"),
+            item.get("rule_based_decision"),
+        )
         concentration = _number(item.get("concentration_pct"))
 
         confirmed = pd.DataFrame()
@@ -334,7 +345,7 @@ def build_plain_summary(
         citations += hazard_citations
 
         cross_categories, cross_sentences, cross_citations = _cross_sentences(
-            cross_rows, concentration, confirmed_only=(result == "규제 해당")
+            cross_rows, concentration, confirmed_only=True
         )
         categories += cross_categories
         citations += cross_citations
@@ -347,10 +358,15 @@ def build_plain_summary(
         if clean(item.get("llm_rule_relation")) == "EXPLICITLY_EXCLUDED":
             explicit_exclusion = True
 
-        if result == "규제 해당":
+        if result in {"규제 해당", "승인 규칙상 해당"}:
             sentences = hazard_sentences + cross_sentences
             if not sentences:
-                sentences = ["직접 CAS 또는 검증된 염류 구조와 적용 조건이 확인되어 규제 해당으로 확정되었습니다."]
+                sentences = ["직접 CAS 또는 검증된 염류 구조와 적용 조건을 확인했습니다."]
+            if result == "승인 규칙상 해당":
+                sentences.append(
+                    "저장된 승인 규칙에서 규제 해당 근거가 확인되었으나 "
+                    "현행 법규 또는 다른 검증 조건이 남아 있어 최종 확정은 보류되었습니다."
+                )
 
         elif result == "비해당":
             if explicit_exclusion and candidate_id:
@@ -382,13 +398,21 @@ def build_plain_summary(
                 sentences = [hold] if hold else cross_sentences[:1]
                 if not sentences:
                     sentences = ["판정에 필요한 정보가 부족하여 전문가 검토가 필요합니다."]
-            categories = []
-            if candidate_category:
-                categories = [x.strip() for x in candidate_category.split("·") if x.strip()]
-            elif cross_categories:
-                categories = cross_categories
+            # Keep confirmed categories even when the final trust gate is HOLD.
 
-        category_text = " / ".join(dict.fromkeys(x.strip() for x in categories if x and x.strip())) or "해당 없음"
+        reviewed_categories = [x.strip() for x in candidate_category.split("·") if x.strip()]
+        if not cross_rows.empty:
+            reviewed_categories.extend(
+                REGIME_LABELS.get(clean(row.get("regime")), clean(row.get("regime_label")))
+                for _, row in cross_rows.iterrows()
+                if clean(row.get("decision")) in {
+                    "해당 후보·검토 필요", "추가정보 필요", "조건 검토 필요"
+                }
+            )
+        category_text = (
+            " / ".join(dict.fromkeys(x.strip() for x in categories if x and x.strip()))
+            or ("확인된 해당 항목 없음" if result == "비해당" else "확인된 해당 항목 없음(미확정)")
+        )
         reason = _cap_reason(sentences, 500)
 
         rows.append({
@@ -397,7 +421,10 @@ def build_plain_summary(
             "함량(%)": concentration,
             "판정결과": result,
             "규제 카테고리": category_text,
+            "검토 후보 카테고리": " / ".join(dict.fromkeys(x for x in reviewed_categories if x)) or "-",
+            "검증 상태": clean(item.get("gate_decision")) or "-",
             "판단근거": reason,
+            "추가 확인사항": _cap_reason([clean(item.get("gate_hold_reason"))], 500) if clean(item.get("gate_hold_reason")) else "-",
             "법적 근거": "; ".join(dict.fromkeys(citations)) or "-",
         })
     return pd.DataFrame(rows, columns=PLAIN_COLUMNS)

@@ -9,6 +9,11 @@ on:
       - "desktop_smoke_test.py"
       - "desktop_ui_smoke_test.py"
       - "engine/result_store.py"
+      - "engine/regulatory_api.py"
+      - "engine/trust_gate.py"
+      - "engine/plain_report.py"
+      - "engine/company_engine.py"
+      - "desktop_regression_test.py"
       - "desktop.spec"
       - "law_api.env.example"
       - "build_desktop.bat"
@@ -41,13 +46,16 @@ jobs:
         run: python -m pip install -r requirements-desktop.txt
 
       - name: Check Python syntax
-        run: python -m py_compile desktop_app.py desktop_backend.py desktop_smoke_test.py desktop_ui_smoke_test.py
+        run: python -m py_compile desktop_app.py desktop_backend.py desktop_smoke_test.py desktop_ui_smoke_test.py desktop_regression_test.py engine/regulatory_api.py engine/trust_gate.py engine/plain_report.py
 
       - name: Qt ON/OFF switch widget smoke test
         run: python desktop_ui_smoke_test.py
 
       - name: Offline rule screening smoke test (without Ollama)
         run: python desktop_smoke_test.py
+
+      - name: Effective-date and approved-rule reporting regression test
+        run: python desktop_regression_test.py
 
       - name: Build standalone Windows application
         run: python -m PyInstaller --noconfirm --clean desktop.spec

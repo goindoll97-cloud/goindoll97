@@ -556,6 +556,22 @@ def law_version_gate(api_status: dict) -> dict:
             "code": "LAW_VERSION_CURRENT",
             "detail": f"공식 API 확인 고시와 승인 마스터가 일치합니다({clean(api_status.get('official_notice'))}).",
         }
+    if sync == "FUTURE_NOTICE":
+        return {
+            "stage_status": HOLD,
+            "code": "LAW_VERSION_FUTURE_NOTICE",
+            "detail": (
+                f"공식 고시 {clean(api_status.get('official_notice'))}호는 "
+                f"{clean(api_status.get('effective_date'))} 시행 예정입니다. "
+                "시행 전 고시를 현행 규칙으로 적용하지 않았으며, 현재 유효한 고시 이력은 별도 검증해야 합니다."
+            ),
+        }
+    if sync == "LOCAL_NOT_EFFECTIVE":
+        return {
+            "stage_status": HOLD,
+            "code": "LAW_VERSION_NOT_YET_EFFECTIVE",
+            "detail": "로컬 승인본과 같은 고시가 아직 시행 전이므로 현재 법규로 자동확정할 수 없습니다.",
+        }
     if sync == "UPDATE_PENDING":
         return {
             "stage_status": HOLD,
@@ -608,6 +624,7 @@ def apply_trust_gate(
     hold_reasons: list[str] = []
     basis_summary: list[str] = []
     coverage_summary: list[str] = []
+    rule_based_decisions: list[str] = []
 
     detail = cross_detail if cross_detail is not None else pd.DataFrame()
 
@@ -645,6 +662,22 @@ def apply_trust_gate(
         }
         auto_gate = automation_basis_gate(evidence_rows, cross_rows)
         blocking = [code for code, res in results.items() if res["stage_status"] != PASS]
+        # Local approved-rule match is a separate fact from legal-currentness.
+        # Neither unapproved API candidates nor AI may create a confirmed hit.
+        approved_hit = (
+            positive
+            and results["S1"]["stage_status"] == PASS
+            and results["S5"]["stage_status"] == PASS
+            and auto_gate["stage_status"] == PASS
+        )
+        if approved_hit:
+            rule_based_decisions.append("승인 규칙상 해당")
+        elif positive:
+            rule_based_decisions.append("규제 해당 후보(근거 검토)")
+        elif human_hazard_review or candidate:
+            rule_based_decisions.append("추가 검토 필요")
+        else:
+            rule_based_decisions.append("확인된 해당 규칙 없음(비해당 미확정)")
 
         if (
             positive
@@ -741,6 +774,7 @@ def apply_trust_gate(
 
     out["gate_status"] = statuses
     out["gate_decision"] = decisions
+    out["rule_based_decision"] = rule_based_decisions
     out["gate_hold_reason"] = hold_reasons
     out["legal_basis_summary"] = basis_summary
     out["coverage_summary"] = coverage_summary

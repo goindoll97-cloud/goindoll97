@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -161,19 +162,56 @@ def check_latest_notice(timeout: int = 45) -> dict:
         }
 
 
-def compare_with_master(api_status: dict, local_notice: str) -> dict:
+def _effective_date(value: Any) -> date | None:
+    """Parse effective dates supplied by law.go.kr (YYYYMMDD or ISO date)."""
+    raw = _clean(value)
+    digits = re.fullmatch(r"(20\\d{2})(\\d{2})(\\d{2})", raw)
+    try:
+        if digits:
+            return date(int(digits[1]), int(digits[2]), int(digits[3]))
+        if re.match(r"^20\\d{2}-\\d{2}-\\d{2}", raw):
+            return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+    return None
+
+
+def compare_with_master(
+    api_status: dict, local_notice: str, as_of: date | str | None = None
+) -> dict:
+    """Separate announced-but-not-yet-effective notices from active revisions.
+
+    The newest announced notice is NOT necessarily the currently effective law.
+    A future notice does not prove that the locally approved rules are up to
+    date either: that requires verification of the currently effective history.
+    """
+    if as_of is None:
+        reference_date = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    elif isinstance(as_of, date):
+        reference_date = as_of
+    else:
+        reference_date = date.fromisoformat(str(as_of)[:10])
     out = dict(api_status)
     out["local_notice"] = _clean(local_notice)
+    out["reference_date"] = reference_date.isoformat()
     official = _clean(out.get("official_notice"))
+    effective = _effective_date(out.get("effective_date"))
     if out.get("status") != "FOUND" or not official:
         out["sync_status"] = "UNVERIFIED"
         out["sync_status_ko"] = "최신 여부 확인 불가"
+    elif effective and effective > reference_date and notice_key(official) >= notice_key(local_notice):
+        if notice_key(official) == notice_key(local_notice):
+            out["sync_status"] = "LOCAL_NOT_EFFECTIVE"
+            out["sync_status_ko"] = f"승인 규칙 시행 전 ({effective.isoformat()})"
+        else:
+            out["sync_status"] = "FUTURE_NOTICE"
+            out["sync_status_ko"] = f"후속 고시 시행 전 ({effective.isoformat()}) · 현행성 별도 확인"
     elif notice_key(official) > notice_key(local_notice):
         out["sync_status"] = "UPDATE_PENDING"
-        out["sync_status_ko"] = "새 고시 발견·검증 대기"
+        out["sync_status_ko"] = "시행 중인 새 고시 발견·검증 대기"
     elif notice_key(official) == notice_key(local_notice):
         out["sync_status"] = "CURRENT"
-        out["sync_status_ko"] = "승인 규칙 최신"
+        out["sync_status_ko"] = "승인 규칙 최신 (해당 고시 기준)"
     else:
         out["sync_status"] = "LOCAL_NEWER"
         out["sync_status_ko"] = "로컬 승인본이 더 최신"
