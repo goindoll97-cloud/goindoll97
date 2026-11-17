@@ -58,8 +58,8 @@ QCheckBox {spacing:9px;}
 
 
 class DataFrameModel(QAbstractTableModel):
-    def __init__(self, frame: pd.DataFrame | None = None):
-        super().__init__()
+    def __init__(self, frame: pd.DataFrame | None = None, parent=None):
+        super().__init__(parent)
         self.frame = frame if frame is not None else pd.DataFrame()
 
     def rowCount(self, parent=None):
@@ -248,6 +248,7 @@ class DesktopWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tables: dict[str, QTableView] = {}
+        self.models: dict[str, DataFrameModel] = {}
         for name in (
             "판정 결과", "규제 상세", "법률근거", "신뢰 게이트",
             "카테고리 검색기록", "포괄범위 후보", "AI 검토기록",
@@ -261,7 +262,9 @@ class DesktopWindow(QMainWindow):
             table.horizontalHeader().setDefaultSectionSize(155)
             table.verticalHeader().setDefaultSectionSize(28)
             table.setWordWrap(False)
-            table.setModel(DataFrameModel())
+            model = DataFrameModel(parent=table)
+            table.setModel(model)
+            self.models[name] = model
             self.tables[name] = table
             self.tabs.addTab(table, name)
         outer.addWidget(self.tabs, 1)
@@ -419,7 +422,9 @@ class DesktopWindow(QMainWindow):
             "AI 검토기록": data["llm_audit"],
         }
         for name, frame in frames.items():
-            self.tables[name].setModel(DataFrameModel(frame))
+            model = DataFrameModel(frame, parent=self.tables[name])
+            self.tables[name].setModel(model)
+            self.models[name] = model
         self.tabs.setCurrentIndex(0)
         count = len(data["summary"])
         file_name = data["saved"]["file_name"]
