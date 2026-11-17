@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from contextlib import contextmanager
+from html import escape
 
 # 배포본에서는 판정 모듈을 engine 폴더에 모아 최상위 파일 수를 줄인다.
 APP_ROOT = Path(__file__).resolve().parent
@@ -100,10 +102,68 @@ st.markdown(
     div[data-testid="stMetric"]{background:white;border:1px solid var(--line);padding:13px 15px;border-radius:12px;
           box-shadow:0 2px 8px rgba(24,53,79,.05)}
     div[data-testid="stFileUploader"]{border:1px solid var(--line);border-radius:12px;padding:8px;background:#fbfdfe}
+    /* 화면 중앙에 로딩 상태를 안내하는 애니메이션 */
+    .app-loading-overlay{
+        position:fixed;inset:0;z-index:999999;display:flex;
+        justify-content:center;align-items:center;
+        background:rgba(17,37,55,.42);backdrop-filter:blur(3px);
+    }
+    .app-loading-card{
+        width:min(90vw,360px);padding:36px 30px 32px;text-align:center;
+        background:#fff;border:1px solid #dce6ec;border-radius:20px;
+        box-shadow:0 18px 55px rgba(8,28,44,.24);
+    }
+    .app-loading-spinner{
+        width:62px;height:62px;margin:0 auto 20px;border-radius:50%;
+        border:6px solid #e4edf2;border-top-color:#236487;
+        animation:app-loading-spin .85s linear infinite;
+    }
+    .app-loading-title{color:#18354f;font-size:1.45rem;font-weight:750;letter-spacing:.02em}
+    .app-loading-dots{display:flex;gap:5px;justify-content:center;margin:10px 0 12px}
+    .app-loading-dots span{
+        width:7px;height:7px;border-radius:50%;background:#2a7f76;
+        animation:app-loading-pulse 1.15s ease-in-out infinite;
+    }
+    .app-loading-dots span:nth-child(2){animation-delay:.15s}
+    .app-loading-dots span:nth-child(3){animation-delay:.3s}
+    .app-loading-detail{color:#527082;font-size:.94rem;line-height:1.55;margin:0}
+    @keyframes app-loading-spin{to{transform:rotate(360deg)}}
+    @keyframes app-loading-pulse{
+        0%,65%,100%{opacity:.3;transform:translateY(0)}
+        30%{opacity:1;transform:translateY(-5px)}
+    }
+    @media (prefers-reduced-motion:reduce){
+        .app-loading-spinner,.app-loading-dots span{animation:none}
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+@contextmanager
+def loading_overlay(title: str = "로딩 중", detail: str = "데이터를 처리하고 있습니다."):
+    """긴 작업 동안 로딩 애니메이션을 표시하고 예외 발생 시에도 제거한다."""
+    placeholder = st.empty()
+    placeholder.markdown(
+        f"""
+        <div class="app-loading-overlay" role="status" aria-live="polite">
+          <div class="app-loading-card">
+            <div class="app-loading-spinner" aria-hidden="true"></div>
+            <div class="app-loading-title">{escape(title)}</div>
+            <div class="app-loading-dots" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <p class="app-loading-detail">{escape(detail)}</p>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    try:
+        yield
+    finally:
+        placeholder.empty()
 
 
 @st.cache_resource
@@ -134,17 +194,18 @@ def download_local_file(path: Path, label: str):
     st.download_button(label, path.read_bytes(), file_name=path.name, width="stretch")
 
 
-try:
-    master, master_notice, salt_rules, extended_rules, cross_approved = load_regulatory_data()
-except Exception as exc:
-    st.error(f"승인 규제 마스터를 불러오지 못했습니다: {type(exc).__name__}: {exc}")
-    st.stop()
+with loading_overlay("로딩 중", "규제 마스터와 최신 법규 정보를 불러오고 있습니다."):
+    try:
+        master, master_notice, salt_rules, extended_rules, cross_approved = load_regulatory_data()
+    except Exception as exc:
+        st.error(f"승인 규제 마스터를 불러오지 못했습니다: {type(exc).__name__}: {exc}")
+        st.stop()
 
-api_status = cached_api_status(master_notice)
-cross_candidates, cross_api_status = cached_cross_regime_api()
-local_ai_status = cached_local_llm_status()
-if api_status.get("sync_status") == "UPDATE_PENDING" and "candidate_download" not in st.session_state:
-    st.session_state["candidate_download"] = download_notice_candidate(api_status)
+    api_status = cached_api_status(master_notice)
+    cross_candidates, cross_api_status = cached_cross_regime_api()
+    local_ai_status = cached_local_llm_status()
+    if api_status.get("sync_status") == "UPDATE_PENDING" and "candidate_download" not in st.session_state:
+        st.session_state["candidate_download"] = download_notice_candidate(api_status)
 
 st.markdown(
     """
@@ -418,7 +479,9 @@ run = st.button(
 
 if run:
     try:
-        with st.status("물질 식별 및 규제 판정을 수행하고 있습니다.", expanded=True) as status:
+        with loading_overlay(
+            "로딩 중", "인벤토리를 분석하고 화학물질 규제 판정 결과를 생성하고 있습니다."
+        ), st.status("물질 식별 및 규제 판정을 수행하고 있습니다.", expanded=True) as status:
             raw_inventory = read_inventory(inventory_file)
             if raw_inventory.empty:
                 raise ValueError("업로드한 인벤토리에 물질 행이 없습니다.")
@@ -894,7 +957,7 @@ if result:
                     retry_bar.progress(done / total if total else 1.0)
                     retry_text.write(f"AI 재검토 중: {done}/{total}건")
 
-                with st.spinner("오류·미처리 물질을 하나씩 재검토하고 있습니다..."):
+                with loading_overlay("로딩 중", "오류·미처리 물질을 AI가 다시 검토하고 있습니다."):
                     extra_audit = analyze_cases(
                         remaining_cases,
                         max_cases=len(remaining_cases),
