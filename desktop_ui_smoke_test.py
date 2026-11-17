@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
-from desktop_app import ToggleSwitch, toggle_option
+from desktop_app import LoadingDialog, ToggleSwitch, toggle_option
 
 
 def main():
@@ -50,7 +50,24 @@ def main():
         row = toggle_option(label, widget)
         assert row.layout().count() == 2
         row.deleteLater()
-    print("PASS: native desktop ON/OFF switch render, state and disabled mode")
+    # A loading dialog can be dismissed without stopping its independent worker.
+    dialog = LoadingDialog(None)
+    assert dialog.title.text() == "로딩 중..."
+    assert dialog.windowFlags() & Qt.WindowType.WindowCloseButtonHint
+    assert dialog.windowModality() == Qt.WindowModality.ApplicationModal
+    dialog.show()
+    app.processEvents()
+    QTest.mouseClick(dialog.close_button, Qt.MouseButton.LeftButton)
+    app.processEvents()
+    assert not dialog.isVisible()
+
+    dialog_x = LoadingDialog(None)
+    dialog_x.show()
+    app.processEvents()
+    assert dialog_x.close()
+    app.processEvents()
+    assert not dialog_x.isVisible()
+    print("PASS: ON/OFF mouse clicks and closable loading dialog")
 
 
 if __name__ == "__main__":

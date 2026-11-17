@@ -181,14 +181,17 @@ class LoadingDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("로딩 중")
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint |
-                            Qt.WindowType.WindowTitleHint)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(27, 28, 27, 27)
         layout.setSpacing(14)
-        self.title = QLabel("●  로딩 중...")
+        self.title = QLabel("로딩 중...")
         self.title.setStyleSheet("font-size:21px;font-weight:700;color:#18354f;")
         self.description = QLabel("프로그램 데이터를 준비하고 있습니다.")
         self.description.setWordWrap(True)
@@ -199,6 +202,16 @@ class LoadingDialog(QDialog):
         layout.addWidget(self.title)
         layout.addWidget(self.description)
         layout.addWidget(self.bar)
+        close_note = QLabel("창을 닫아도 작업은 계속 진행되며, 완료 후 결과가 표시됩니다.")
+        close_note.setWordWrap(True)
+        close_note.setStyleSheet("color:#567082;font-size:12px;")
+        layout.addWidget(close_note)
+        self.close_button = QPushButton("창 닫기")
+        self.close_button.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(self.close_button)
+        layout.addLayout(buttons)
 
     def set_message(self, message: str):
         self.description.setText(message)
@@ -408,6 +421,7 @@ class DesktopWindow(QMainWindow):
         self.refresh_button.setEnabled(False)
         self.retry_button.setEnabled(False)
         self.loading = LoadingDialog(self)
+        self.loading.finished.connect(self._loading_window_closed)
         self.loading.show()
 
         thread = QThread(self)
@@ -424,6 +438,17 @@ class DesktopWindow(QMainWindow):
         self.thread = thread
         self.worker = worker
         thread.start()
+
+    @Slot(int)
+    def _loading_window_closed(self, _result: int):
+        # Dismissing the progress dialog never interrupts the worker thread.
+        # The status bar continues showing progress until results are ready.
+        if self.sender() is self.loading:
+            self.loading = None
+            if self.thread is not None:
+                self.statusBar().showMessage(
+                    "로딩 창을 닫았습니다. 작업은 계속 진행 중이며 완료 시 결과가 표시됩니다."
+                )
 
     @Slot(str)
     def _on_progress(self, message: str):
