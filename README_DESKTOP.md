@@ -64,7 +64,7 @@ GitHub 저장소의 Actions > Build Windows desktop application > Run workflow�
 
 1. Windows에서 EXE 폴더를 준비합니다.
 2. ChemicalRegulatoryDesktop.exe를 열고 로컬 AI가 OFF인지 확인합니다. AI가 없더라도 기본 판정은 가능합니다.
-3. 테스트 파일: 소스 저장소의 engine/data/sample_company_inventory.csv를 별도로 준비합니다.
+3. 프로그램에서 [예시파일 선택] 버튼을 누르면 포함된 예시 인벤토리 6건을 바로 불러올 수 있습니다. 별도의 테스트 파일이 없어도 됩니다.
 4. 인터넷 상태에 따라 PubChem과 실시간 법규 조회를 결정합니다. 법규 API 인증키가 없으면 실시간 확인은 꺼진 상태가 기본입니다.
 5. 판정 실행, 결과 표, Excel 저장 기능을 실제 발표용 PC에서 미리 테스트합니다.
 6. 발표 PC에서 Ollama를 사용할 수 없으면 AI 재검토는 시연하지 않고 ON/OFF 기능과 연결 상태를 설명합니다.
