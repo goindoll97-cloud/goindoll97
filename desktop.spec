@@ -2,7 +2,7 @@
 """Build a self-contained Windows desktop EXE (folder distribution)."""
 
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 ROOT = Path(SPECPATH)
 rdkit_datas, rdkit_binaries, rdkit_hidden = collect_all("rdkit")
@@ -13,8 +13,8 @@ a = Analysis(
     binaries=rdkit_binaries,
     # Engine modules are imported as top-level modules; their __file__ is
     # _MEIPASS/module.py in PyInstaller. The approved CSVs must be in data/.
-    datas=[(str(ROOT / "engine" / "data"), "data")] + rdkit_datas,
-    hiddenimports=rdkit_hidden,
+    datas=[(str(ROOT / "engine" / "data"), "data")] + rdkit_datas + collect_data_files("tzdata"),
+    hiddenimports=rdkit_hidden + ["tzdata"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
