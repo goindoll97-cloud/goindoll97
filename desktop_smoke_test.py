@@ -7,7 +7,7 @@ import desktop_backend as backend
 
 
 def main():
-    log = print
+    log = lambda message: None  # Windows CI consoles may not encode Korean.
     catalog = backend.initialize(online_law=False, progress=log)
     assert not catalog["api_status"]["sync_status"] == "CURRENT"
     source = (
