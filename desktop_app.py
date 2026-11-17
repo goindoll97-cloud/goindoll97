@@ -20,7 +20,7 @@ from PySide6.QtGui import QDesktopServices, QFont, QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QTabWidget, QTableView, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QTableView, QVBoxLayout, QWidget,
 )
 
 # Read optional .env next to the executable. Never embed credentials into the EXE.
@@ -333,28 +333,24 @@ class DesktopWindow(QMainWindow):
         self.info.setStyleSheet("font-weight:600;color:#236487;")
         outer.addWidget(self.info)
 
-        self.tabs = QTabWidget()
-        self.tables: dict[str, QTableView] = {}
-        self.models: dict[str, DataFrameModel] = {}
-        for name in (
-            "판정 결과", "규제 상세", "법률근거", "신뢰 게이트",
-            "카테고리 검색기록", "포괄범위 후보", "AI 검토기록",
-        ):
-            table = QTableView()
-            table.setAlternatingRowColors(True)
-            table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-            table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
-            table.setSortingEnabled(False)
-            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-            table.horizontalHeader().setDefaultSectionSize(155)
-            table.verticalHeader().setDefaultSectionSize(28)
-            table.setWordWrap(False)
-            model = DataFrameModel(parent=table)
-            table.setModel(model)
-            self.models[name] = model
-            self.tables[name] = table
-            self.tabs.addTab(table, name)
-        outer.addWidget(self.tabs, 1)
+        # The screen shows only the reader-facing summary. Detailed legal,
+        # search and trust-gate audits remain available in exported Excel.
+        result_heading = QLabel("판정 결과")
+        result_heading.setStyleSheet("font-size:16px;font-weight:700;color:#183b55;")
+        outer.addWidget(result_heading)
+        self.result_table = QTableView()
+        self.result_table.setObjectName("judgementResults")
+        self.result_table.setAlternatingRowColors(True)
+        self.result_table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self.result_table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        self.result_table.setSortingEnabled(False)
+        self.result_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.result_table.horizontalHeader().setDefaultSectionSize(155)
+        self.result_table.verticalHeader().setDefaultSectionSize(28)
+        self.result_table.setWordWrap(False)
+        self.result_model = DataFrameModel(parent=self.result_table)
+        self.result_table.setModel(self.result_model)
+        outer.addWidget(self.result_table, 1)
 
         open_results = QPushButton("결과 폴더 열기")
         open_results.clicked.connect(self.open_results)
@@ -541,20 +537,8 @@ class DesktopWindow(QMainWindow):
 
     def _show_result(self):
         data = self.result
-        frames = {
-            "판정 결과": data["plain"],
-            "규제 상세": data["summary"],
-            "법률근거": data["legal_basis"],
-            "신뢰 게이트": data["gate_log"],
-            "카테고리 검색기록": data["category_log"],
-            "포괄범위 후보": data["no_cas_candidates"],
-            "AI 검토기록": data["llm_audit"],
-        }
-        for name, frame in frames.items():
-            model = DataFrameModel(frame, parent=self.tables[name])
-            self.tables[name].setModel(model)
-            self.models[name] = model
-        self.tabs.setCurrentIndex(0)
+        self.result_model = DataFrameModel(data["plain"], parent=self.result_table)
+        self.result_table.setModel(self.result_model)
         count = len(data["summary"])
         file_name = data["saved"]["file_name"]
         review_count = max(0, len(data["llm_cases"]) - len(data["llm_audit"]))

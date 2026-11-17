@@ -6,8 +6,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
-from desktop_app import LoadingDialog, ToggleSwitch, toggle_option
+import pandas as pd
+from PySide6.QtWidgets import QApplication, QTabWidget, QTableView
+from desktop_app import DesktopWindow, LoadingDialog, ToggleSwitch, toggle_option
 
 
 def main():
@@ -67,7 +68,35 @@ def main():
     assert dialog_x.close()
     app.processEvents()
     assert not dialog_x.isVisible()
-    print("PASS: ON/OFF mouse clicks and closable loading dialog")
+    # The live desktop UI has one result table, without any extra detail tabs.
+    # Avoid starting background catalog initialization during this UI-only test.
+    original_load = DesktopWindow.load_catalog
+    DesktopWindow.load_catalog = lambda self: None
+    try:
+        window = DesktopWindow()
+        assert not window.findChildren(QTabWidget), "Only one result table should be visible"
+        assert window.findChildren(QTableView) == [window.result_table]
+        assert window.result_table.objectName() == "judgementResults"
+        row = pd.DataFrame([{
+            "물질명": "시험물질", "판정결과": "승인 규칙상 해당",
+            "규제 카테고리": "인체급성유해성물질",
+            "판단근거": "직접 CAS 일치", "법적 근거": "고유번호 예시",
+        }])
+        window.catalog = {"ai_status": {"ready": False}}
+        window.result = {
+            "plain": row, "summary": row,
+            "saved": {"file_name": "test.xlsx"},
+            "llm_cases": [], "llm_audit": pd.DataFrame(),
+        }
+        window._show_result()
+        model = window.result_table.model()
+        assert model.rowCount() == 1
+        assert model.columnCount() == 5
+        assert model.frame.iloc[0]["법적 근거"] == "고유번호 예시"
+        window.close()
+    finally:
+        DesktopWindow.load_catalog = original_load
+    print("PASS: ON/OFF, closable loading dialog, single judgement results table")
 
 
 if __name__ == "__main__":
