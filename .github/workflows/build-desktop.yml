@@ -12,6 +12,10 @@ on:
       - "engine/regulatory_api.py"
       - "engine/trust_gate.py"
       - "engine/plain_report.py"
+      - "engine/broad_salt_identity.py"
+      - "engine/no_cas_scope.py"
+      - "engine/tests/test_company_engine.py"
+      - "engine/tests/test_no_cas_scope.py"
       - "engine/company_engine.py"
       - "desktop_regression_test.py"
       - "desktop.spec"
@@ -56,6 +60,14 @@ jobs:
 
       - name: Effective-date and approved-rule reporting regression test
         run: python desktop_regression_test.py
+
+      - name: Verify recent CAS-date and scope-candidate fixes
+        shell: pwsh
+        env:
+          PYTHONPATH: engine
+        run: |
+          python -m unittest engine.tests.test_company_engine.ExcelDateCasRepairTest
+          python -m unittest engine.tests.test_no_cas_scope.NoCasScopeTest.test_explicit_exclusion_only_keeps_non_regulated_decision engine.tests.test_no_cas_scope.NoCasScopeTest.test_candidate_already_evaluated_by_verified_match_keeps_decision engine.tests.test_no_cas_scope.NoCasScopeTest.test_unverified_candidate_is_still_held
 
       - name: Build standalone Windows application
         run: python -m PyInstaller --noconfirm --clean desktop.spec
