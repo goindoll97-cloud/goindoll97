@@ -581,3 +581,24 @@ class DraftHintsSheetTest(unittest.TestCase):
         )
         names = load_workbook(BytesIO(wb_bytes), read_only=True).sheetnames
         self.assertNotIn("구조초안힌트(미검증)", names)
+
+
+class ExcelDateCasRepairTest(unittest.TestCase):
+    """Excel converts a typed CAS like 6019-06-3 into the date 6019-06-03."""
+
+    def test_date_converted_cas_is_restored_when_checksum_is_valid(self):
+        import datetime
+        from broad_salt_identity import normalize_cas, valid_cas_checksum
+        for value in ("6019-06-03", "6019-06-03 00:00:00", datetime.datetime(6019, 6, 3)):
+            self.assertEqual(normalize_cas(value), "6019-06-3")
+        self.assertTrue(valid_cas_checksum(normalize_cas("6019-06-03")))
+        self.assertEqual(normalize_cas("7446-08-04"), "7446-08-4")
+
+    def test_other_values_are_left_unchanged(self):
+        from broad_salt_identity import normalize_cas
+        self.assertEqual(normalize_cas(" 50-00-0 "), "50-00-0")
+        self.assertEqual(normalize_cas("6019-06-3"), "6019-06-3")
+        self.assertEqual(normalize_cas("2024-05-12"), "2024-05-12")  # 일이 두 자리면 CAS 아님
+        self.assertEqual(normalize_cas("2024-05-03"), "2024-05-03")  # 복원해도 체크섬 불일치
+        self.assertEqual(normalize_cas("000-00-0"), "000-00-0")
+        self.assertEqual(normalize_cas(None), "")
