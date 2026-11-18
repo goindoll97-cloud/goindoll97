@@ -338,9 +338,24 @@ def normalize_isomer_scope(x) -> str:
     return aliases.get(value, "UNSPECIFIED_REVIEW")
 
 
+# Excel turns a typed CAS such as 6019-06-3 into the date 6019-06-03 (a date cell reads
+# back as "6019-06-03 00:00:00"). A two-digit last block can never be a valid CAS RN.
+_EXCEL_DATE_CAS_RE = re.compile(r"^(\d{4})-(\d{2})-0(\d)(?:[ T]00:00:00)?$")
+
+
 def normalize_cas(x) -> str:
-    """Normalize a CAS Registry Number without guessing missing punctuation."""
-    return re.sub(r"\s+", "", clean(x))
+    """Normalize a CAS Registry Number without guessing missing punctuation.
+
+    The one repair made is undoing Excel's date auto-conversion, and only when the
+    restored number passes the CAS checksum; anything else is returned unchanged.
+    """
+    text = clean(x)
+    match = _EXCEL_DATE_CAS_RE.match(text)
+    if match:
+        restored = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+        if valid_cas_checksum(restored):
+            return restored
+    return re.sub(r"\s+", "", text)
 
 
 def valid_cas_checksum(cas: str) -> bool:
