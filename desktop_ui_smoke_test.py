@@ -7,14 +7,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 import pandas as pd
-from PySide6.QtWidgets import QApplication, QTabWidget, QTableView
+from PySide6.QtWidgets import QApplication, QPushButton, QTabWidget, QTableView
 from desktop_app import DesktopWindow, LoadingDialog, ToggleSwitch, toggle_option
 
 
 def main():
     app = QApplication.instance() or QApplication([])
     labels = (
-        "누락 SMILES를 PubChem에서 자동 수집",
+        "화학물질 구조정보 자동으로 찾기 (인터넷)",
         "어려운 보류 사례만 로컬 AI 자동검토",
         "공식 법규 API 최신성 확인 (인터넷)",
     )
@@ -77,6 +77,11 @@ def main():
         assert len(configured_switches) == 3, "Only PubChem, AI and law API switches remain"
         assert all("상세 감사자료" not in switch.accessibleName() for switch in configured_switches)
         assert not hasattr(window, "detail_toggle")
+        assert not hasattr(window, "retry_button")
+        assert all("오류·미처리 AI 재검토" != button.text() for button in window.findChildren(QPushButton))
+        assert window.refresh_button.text() == "법령 데이터/AI 상태 새로고침"
+        assert window.pubchem_toggle.accessibleName() == "화학물질 구조정보 자동으로 찾기 (인터넷)"
+        assert "PubChem" in window.pubchem_toggle.toolTip()
         assert not window.findChildren(QTabWidget), "Only one result table should be visible"
         assert window.findChildren(QTableView) == [window.result_table]
         assert window.result_table.objectName() == "judgementResults"

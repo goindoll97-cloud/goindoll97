@@ -288,14 +288,18 @@ class DesktopWindow(QMainWindow):
         option_grid.setVerticalSpacing(8)
         option_grid.setColumnStretch(0, 1)
         option_grid.setColumnStretch(1, 1)
-        self.pubchem_toggle = ToggleSwitch("누락 SMILES를 PubChem에서 자동 수집")
+        self.pubchem_toggle = ToggleSwitch("화학물질 구조정보 자동으로 찾기 (인터넷)")
+        self.pubchem_toggle.setToolTip(
+            "물질의 구조정보가 없을 때 인터넷(PubChem)에서 자동으로 찾습니다. "
+            "인터넷에 연결되지 않으면 입력된 정보만 사용합니다."
+        )
         self.pubchem_toggle.setChecked(True)
         self.ai_toggle = ToggleSwitch("어려운 보류 사례만 로컬 AI 자동검토")
         self.ai_toggle.setEnabled(False)
         self.law_toggle = ToggleSwitch("공식 법규 API 최신성 확인 (인터넷)")
         self.law_toggle.setChecked(bool(get_api_credential()[0]))
         self.law_toggle.toggled.connect(self._api_option_changed)
-        option_grid.addWidget(toggle_option("누락 SMILES를 PubChem에서 자동 수집", self.pubchem_toggle), 0, 0)
+        option_grid.addWidget(toggle_option("화학물질 구조정보 자동으로 찾기 (인터넷)", self.pubchem_toggle), 0, 0)
         option_grid.addWidget(toggle_option("어려운 보류 사례만 로컬 AI 자동검토", self.ai_toggle), 0, 1)
         option_grid.addWidget(toggle_option("공식 법규 API 최신성 확인 (인터넷)", self.law_toggle), 1, 0)
         form.addLayout(option_grid)
@@ -313,14 +317,10 @@ class DesktopWindow(QMainWindow):
         self.export_button = QPushButton("Excel 다른 이름으로 저장")
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.export_excel)
-        self.retry_button = QPushButton("오류·미처리 AI 재검토")
-        self.retry_button.setEnabled(False)
-        self.retry_button.clicked.connect(self.retry_ai)
-        self.refresh_button = QPushButton("규제 데이터/AI 상태 새로고침")
+        self.refresh_button = QPushButton("법령 데이터/AI 상태 새로고침")
         self.refresh_button.clicked.connect(self.load_catalog)
         actions.addWidget(self.run_button)
         actions.addWidget(self.export_button)
-        actions.addWidget(self.retry_button)
         actions.addWidget(self.refresh_button)
         actions.addStretch(1)
         form.addLayout(actions)
@@ -355,7 +355,7 @@ class DesktopWindow(QMainWindow):
         outer.addWidget(open_results, 0, Qt.AlignmentFlag.AlignRight)
 
         self.setCentralWidget(root)
-        self.statusBar().showMessage("규제 데이터를 불러오는 중...")
+        self.statusBar().showMessage("법령 데이터를 불러오는 중...")
         self.load_catalog()
 
     def choose_file(self):
@@ -413,7 +413,6 @@ class DesktopWindow(QMainWindow):
         self.current_task = task_name
         self.run_button.setEnabled(False)
         self.refresh_button.setEnabled(False)
-        self.retry_button.setEnabled(False)
         self.loading = LoadingDialog(self)
         self.loading.finished.connect(self._loading_window_closed)
         self.loading.show()
@@ -473,7 +472,6 @@ class DesktopWindow(QMainWindow):
             self.loading = None
         self.refresh_button.setEnabled(True)
         self.run_button.setEnabled(self.catalog is not None)
-        self.retry_button.setEnabled(bool(self.result and self.catalog and self.catalog["ai_status"].get("ready")))
         self.statusBar().showMessage("작업 중 오류 발생")
         QMessageBox.critical(
             self, "실행 오류",
@@ -490,7 +488,7 @@ class DesktopWindow(QMainWindow):
         self.catalog = None
         self.ai_toggle.setChecked(False)
         self.ai_toggle.setEnabled(False)
-        self.law_status.setText("규제 마스터를 불러오는 중...")
+        self.law_status.setText("법령 데이터를 불러오는 중...")
         self._start("catalog", backend.initialize, (self.law_toggle.isChecked(),))
 
     def _set_catalog_status(self):
@@ -509,11 +507,10 @@ class DesktopWindow(QMainWindow):
         law = self.catalog["api_status"].get("sync_status_ko", "")
         self.law_status.setText(f"승인 규제 마스터: {notice}  |  최신성 상태: {law}")
         self.info.setText("준비 완료. 인벤토리 파일을 선택하고 판정하세요.")
-        self.retry_button.setEnabled(bool(self.result and ai.get("ready")))
 
     def run_screen(self):
         if self.catalog is None:
-            QMessageBox.warning(self, "준비 중", "규제 데이터 새로고침을 먼저 완료하세요.")
+            QMessageBox.warning(self, "준비 중", "법령 데이터 새로고침을 먼저 완료하세요.")
             return
         source = Path(self.file_path.text().strip())
         if not source.is_file():
@@ -528,26 +525,14 @@ class DesktopWindow(QMainWindow):
              self.ai_toggle.isChecked())
         )
 
-    def retry_ai(self):
-        if not self.result or not self.catalog or not self.catalog["ai_status"].get("ready"):
-            return
-        self._start("retry", backend.rerun_ai, (self.result,))
-
     def _show_result(self):
         data = self.result
         self.result_model = DataFrameModel(data["plain"], parent=self.result_table)
         self.result_table.setModel(self.result_model)
         count = len(data["summary"])
         file_name = data["saved"]["file_name"]
-        review_count = max(0, len(data["llm_cases"]) - len(data["llm_audit"]))
-        self.info.setText(
-            f"{count:,}건 판정 완료  |  결과 저장: {file_name}"
-            + (f"  |  미처리 AI 사례: {review_count:,}건" if review_count else "")
-        )
+        self.info.setText(f"{count:,}건 판정 완료  |  결과 저장: {file_name}")
         self.export_button.setEnabled(True)
-        self.retry_button.setEnabled(bool(
-            self.catalog["ai_status"].get("ready") and data["llm_cases"]
-        ))
 
     def export_excel(self):
         if not self.result:
