@@ -275,11 +275,14 @@ class DesktopWindow(QMainWindow):
         self.file_path.setPlaceholderText("CSV 또는 Excel 파일을 선택하세요.")
         choose = QPushButton("파일 찾기")
         choose.clicked.connect(self.choose_file)
-        example = QPushButton("예시파일 선택")
-        example.clicked.connect(self.choose_example_file)
+        self.example_button = QPushButton("작성예시파일")
+        self.example_button.setToolTip(
+            "물질명, CAS번호, 함량 등을 작성할 수 있는 Excel 예시 양식을 저장합니다."
+        )
+        self.example_button.clicked.connect(self.save_entry_example)
         file_row.addWidget(label)
         file_row.addWidget(self.file_path, 1)
-        file_row.addWidget(example)
+        file_row.addWidget(self.example_button)
         file_row.addWidget(choose)
         form.addLayout(file_row)
 
@@ -366,13 +369,33 @@ class DesktopWindow(QMainWindow):
         if path:
             self.file_path.setText(path)
 
-    def choose_example_file(self):
-        example = backend.company.DATA_DIR / "sample_company_inventory.csv"
-        if example.is_file():
-            self.file_path.setText(str(example))
-            self.info.setText("예시 인벤토리 6건을 선택했습니다. 판정을 실행할 수 있습니다.")
-        else:
-            QMessageBox.warning(self, "예시파일 없음", "예시 인벤토리 파일을 찾지 못했습니다.")
+    def save_entry_example(self):
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "작성예시파일 저장",
+            str(Path.home() / "작성예시파일.xlsx"),
+            "Excel 작성 양식 (*.xlsx)",
+        )
+        if not target:
+            return
+        if not target.lower().endswith(".xlsx"):
+            target += ".xlsx"
+        try:
+            backend.write_inventory_example(Path(target))
+        except Exception as exc:
+            QMessageBox.critical(self, "예시파일 저장 실패", str(exc))
+            return
+        self.info.setText(
+            "작성예시파일 저장 완료. 예시 행을 실제 물질 정보로 수정한 뒤 "
+            "'파일 찾기'에서 작성한 Excel을 선택하세요."
+        )
+        QMessageBox.information(
+            self,
+            "작성예시파일 저장 완료",
+            "Excel 예시 양식을 저장했습니다.\n"
+            "예시 2개 물질은 실제 정보로 교체하거나 삭제하세요.\n\n"
+            f"{target}",
+        )
 
     def choose_workspace(self):
         if self.thread is not None:

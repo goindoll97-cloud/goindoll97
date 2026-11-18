@@ -73,6 +73,9 @@ def main():
     DesktopWindow.load_catalog = lambda self: None
     try:
         window = DesktopWindow()
+        assert window.example_button.text() == "작성예시파일"
+        assert "Excel" in window.example_button.toolTip()
+        assert not hasattr(window, "choose_example_file")
         configured_switches = window.findChildren(ToggleSwitch)
         assert len(configured_switches) == 3, "Only PubChem, AI and law API switches remain"
         assert all("상세 감사자료" not in switch.accessibleName() for switch in configured_switches)

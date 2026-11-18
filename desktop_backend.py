@@ -91,6 +91,77 @@ def set_workspace(directory: str | Path) -> Path:
 set_workspace(WORKSPACE_DIR)
 
 
+
+def write_inventory_example(path: str | Path) -> Path:
+    """Save an editable Excel example; the first worksheet is importable as-is.
+
+    Sample rows are explicitly examples, not regulatory determinations.
+    The user replaces them with their actual material inventory before screening.
+    """
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    target = Path(path)
+    if target.suffix.lower() != ".xlsx":
+        raise ValueError("작성예시파일은 .xlsx 형식이어야 합니다.")
+
+    columns = [
+        "물질명", "CAS번호", "함량(%)", "제품명", "부서",
+        "용도설명", "연간취급량(kg)", "허가·신고상태", "취급행위", "SMILES",
+    ]
+    examples = pd.DataFrame(
+        [
+            ["포름알데히드", "50-00-0", 2, "예시 제품 A", "연구개발", "연구용", 12, "확인 중", "사용", ""],
+            ["카페인", "58-08-2", 1, "예시 제품 B", "품질관리", "시료 시험", 6, "해당 없음", "사용", ""],
+        ],
+        columns=columns,
+    )
+    guide = pd.DataFrame(
+        [
+            ("작성 방법", "'물질입력' 시트의 예시 2행을 실제 물질로 바꾸거나 삭제한 뒤 저장하세요."),
+            ("필수 정보", "물질명, CAS번호, 함량(%)을 작성하세요. 다른 열은 가능한 범위에서 입력하세요."),
+            ("함량 예시", "2%는 숫자 2로 입력합니다. 0.02가 아닙니다."),
+            ("CAS번호", "50-00-0처럼 하이픈을 포함한 번호를 입력하세요."),
+            ("분자구조", "SMILES를 모르면 비워두어도 됩니다. 인터넷에서 자동 찾기 기능을 사용할 수 있습니다."),
+            ("판정 방법", "파일 저장 후 프로그램의 '파일 찾기'를 눌러 작성한 Excel을 선택하세요."),
+            ("주의", "예시 행을 남겨두면 예시 물질도 판정 대상에 포함됩니다."),
+        ],
+        columns=["항목", "작성 안내"],
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with pd.ExcelWriter(target, engine="openpyxl") as writer:
+        examples.to_excel(writer, sheet_name="물질입력", index=False)
+        guide.to_excel(writer, sheet_name="작성안내", index=False)
+        ws = writer.book["물질입력"]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = "A1:J3"
+        ws.row_dimensions[1].height = 29
+        for cell in ws[1]:
+            cell.fill = PatternFill(fill_type="solid", fgColor="234968")
+            cell.font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        widths = [23, 18, 14, 22, 17, 27, 21, 21, 15, 40]
+        for i, width in enumerate(widths, start=1):
+            ws.column_dimensions[ws.cell(1, i).column_letter].width = width
+        for row in range(2, 4):
+            ws.row_dimensions[row].height = 24
+            for cell in ws[row]:
+                cell.fill = PatternFill(fill_type="solid", fgColor="EAF3FB")
+            ws.cell(row, 2).number_format = "@"
+            ws.cell(row, 3).number_format = "0.00"
+        tip = writer.book["작성안내"]
+        tip.freeze_panes = "A2"
+        tip.column_dimensions["A"].width = 22
+        tip.column_dimensions["B"].width = 90
+        tip.row_dimensions[1].height = 28
+        for cell in tip[1]:
+            cell.fill = PatternFill(fill_type="solid", fgColor="234968")
+            cell.font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
+        for row in range(2, tip.max_row + 1):
+            tip.row_dimensions[row].height = 30
+            tip.cell(row, 1).fill = PatternFill(fill_type="solid", fgColor="EAF3FB")
+            tip.cell(row, 2).alignment = Alignment(wrap_text=True, vertical="center")
+    return target
+
 def notice_status_offline() -> dict:
     return {
         "status": "NOT_CHECKED",

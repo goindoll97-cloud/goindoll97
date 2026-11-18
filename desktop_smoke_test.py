@@ -27,6 +27,14 @@ def main():
         assert backend.cross_regime.PENDING_DIR.parent == backend.PENDING_DIR
         assert backend.regulatory_api.PENDING_DIR == backend.PENDING_DIR
 
+        example = backend.write_inventory_example(Path(temp) / "작성예시파일.xlsx")
+        assert example.is_file()
+        parsed = backend.read_inventory(None, default_path=example)
+        assert len(parsed) == 2
+        assert list(parsed["chemical_name"]) == ["포름알데히드", "카페인"]
+        assert list(parsed["cas"]) == ["50-00-0", "58-08-2"]
+        assert list(parsed["concentration_pct"]) == [2, 1]
+        assert "smiles" in parsed.columns
         catalog = backend.initialize(online_law=False, progress=log)
         assert catalog["api_status"]["sync_status"] != "CURRENT"
         result = backend.screen_inventory(
