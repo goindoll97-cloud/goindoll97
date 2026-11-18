@@ -209,6 +209,23 @@ def _candidate_sort_key(row: pd.Series) -> tuple:
     )
 
 
+def _keeps_engine_decision(row: pd.Series, ranked: pd.DataFrame) -> bool:
+    """True when a CAS-less candidate adds no new uncertainty over the engine's decision.
+
+    (a) 후보 지정번호가 이미 검증된 직접 CAS·염류 구조 일치로 평가된 지정번호와 같고 판정이
+        '기준 미만'/'규제 해당'인 경우(예: 승인된 모체 규칙이 있는 모체 물질 자체).
+    (b) 모든 후보가 명시적 제외 CAS이고 다른 일치·검토 후보가 없어 '확인 범위 내 비해당'인 경우.
+    그 외(예: 제외 후보와 다른 이성질체 후보가 함께 있는 경우)는 기존대로 보류한다.
+    """
+    final = _clean(row.get("final_decision"))
+    candidate_ids = {_clean(v) for v in ranked["designation_id"] if _clean(v)}
+    matched_ids = {x.strip() for x in _clean(row.get("designation_id")).split(";") if x.strip()}
+    if final in {"기준 미만", "규제 해당"} and candidate_ids and candidate_ids <= matched_ids:
+        return True
+    explicit = ranked["is_explicit_exception"].map(bool) if "is_explicit_exception" in ranked else pd.Series([False])
+    return final == "확인 범위 내 비해당" and len(ranked) > 0 and bool(explicit.all())
+
+
 def attach_no_cas_candidates(summary: pd.DataFrame, candidates: pd.DataFrame) -> pd.DataFrame:
     out = summary.copy()
     out["no_cas_scope_candidate_count"] = 0
@@ -287,6 +304,9 @@ def attach_no_cas_candidates(summary: pd.DataFrame, candidates: pd.DataFrame) ->
         confirmed = out.loc[mask, "gate_decision"].astype(str).str.contains("자동 확정")
         change_mask = mask.copy()
         change_mask.loc[mask] = ~confirmed.values
+        # 후보 정보(위 컬럼)는 항상 붙이되, 앞 단계가 이미 근거로 내린 판정은 덮어쓰지 않는다.
+        keep = out.loc[mask].apply(lambda r: _keeps_engine_decision(r, ranked), axis=1)
+        change_mask.loc[mask] = change_mask.loc[mask].values & ~keep.values
         out.loc[change_mask, "final_decision"] = "전문가 검토 필요"
         out.loc[change_mask, "overall_decision"] = "추가 확인 필요"
         out.loc[change_mask, "gate_status"] = "GATE_HOLD"

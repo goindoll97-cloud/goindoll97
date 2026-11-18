@@ -48,7 +48,7 @@ READER_GUIDE_ROWS = [
     ("검증된 염류 구조", "회사 물질이 '~와 그 염류' 규정의 염류인지 승인된 염류 규칙과 PubChem으로 검증된 구조를 이용해 확인한 경우입니다. 자동확정이 가능한 핵심 경로입니다."),
     ("기준물질", "포괄 규제범위를 연결하기 위한 기준 물질 또는 기준 CAS입니다. 기준물질과의 연결만으로 규제 해당을 자동확정하지 않습니다."),
     ("포괄 규제범위 후보", "혼합물·반응생성물·화합물군·UVCB·일반 구조범위처럼 직접 CAS 또는 검증된 염류 구조만으로 확정하기 어려운 규제항목의 검토 후보입니다. 후보는 분류·검토 보조용이며 자동확정하지 않습니다."),
-    ("명시적 제외", "법규 원문에서 특정 물질 또는 조건을 해당 규제범위에서 제외한다고 명시한 경우입니다. 명시적 제외조건은 이름·구조 유사성에 따른 포함 후보보다 항상 우선합니다. 다만 해당 규제항목에서 제외됐다는 사실만으로 다른 규제까지 모두 비해당으로 확정하지 않으므로 최종 결과는 보류될 수 있습니다."),
+    ("명시적 제외", "법규 원문에서 특정 물질 또는 조건을 해당 규제범위에서 제외한다고 명시한 경우입니다. 명시적 제외조건은 이름·구조 유사성에 따른 포함 후보보다 항상 우선합니다. 제외 CAS 외에 다른 후보가 없고 확인한 다른 규제 카테고리에서도 일치가 없으면 일반 비해당과 같게 처리하며, 다른 규제 항목의 후보가 함께 남아 있으면 보류합니다."),
     ("법적 근거", "인체등유해성·제한·금지물질은 고유번호를, 사고대비물질은 별표 1의 항목번호를 표시합니다. 예: 「인체등유해성물질」 고유번호 97-1-102; 「사고대비물질」 별표 1 제1호."),
     ("AI 보조검토", "AI는 포괄 규제범위 후보의 분류와 추가 확인사항 정리에만 사용합니다. AI 판단은 규제 해당·비해당 자동확정 근거로 사용하지 않습니다."),
 ]
@@ -56,7 +56,7 @@ READER_GUIDE_ROWS = [
 DECISION_POLICY_ROWS = [
     ("규제 해당", "직접 CAS 일치 또는 검증된 염류 구조 일치이며 함량·조건도 충족", "규제 카테고리별 기준과 실제 함량을 함께 표시"),
     ("승인 규칙상 해당", "승인 규칙에서 자동화 가능한 양성 근거가 확인되지만 법규 현행성 또는 추가 검증이 남음", "규칙상 해당 근거와 검증 상태를 별도 열에 표시"),
-    ("보류", "직접 CAS·검증된 염류 구조 이외의 포괄 규제범위, 정보 부족, 적용조건 확인 또는 명시적 제외 후 다른 규제 적용 여부를 추가 확인해야 하는 경우", "가장 관련성 높은 규제명 하나와 검토 필요 사유만 표시"),
+    ("보류", "직접 CAS·검증된 염류 구조 이외의 포괄 규제범위, 정보 부족, 적용조건 확인 또는 명시적 제외와 함께 다른 규제 후보가 남아 있어 추가 확인해야 하는 경우", "가장 관련성 높은 규제명 하나와 검토 필요 사유만 표시"),
     ("비해당", "확인 가능한 규제범위와 필요한 조건을 모두 검토했으나 적용 항목이 확인되지 않은 경우", "확인한 범위와 미해당 근거를 표시"),
 ]
 
@@ -102,6 +102,8 @@ def _match_short(row: pd.Series) -> str:
         return "CAS번호가 직접 일치"
     if match_type == "검증된 염류 구조":
         ref = f"{parent}(CAS {parent_cas})" if parent_cas else parent
+        if parent_cas and clean(row.get("cas")) == parent_cas:
+            return f"기준물질 {ref} 자체로 구조 확인"
         return f"{ref}의 염류로 구조 확인"
     return "검토 후보와 연결"
 
@@ -354,6 +356,7 @@ def build_plain_summary(
         candidate_id = clean(primary.get("designation_id"))
         candidate_name = clean(primary.get("regulatory_name")) or "복합 규제범위"
         candidate_category = _normalize_categories(primary.get("regulatory_categories"), "·")
+        engine_final = clean(item.get("final_decision"))
         explicit_exclusion = bool(primary.get("explicit_exception")) or clean(primary.get("match_type")) == "EXPLICIT_EXCEPTION_CAS"
         if clean(item.get("llm_rule_relation")) == "EXPLICITLY_EXCLUDED":
             explicit_exclusion = True
@@ -380,7 +383,14 @@ def build_plain_summary(
             categories = []
 
         else:
-            if explicit_exclusion and candidate_id:
+            if engine_final == "기준 미만" and hazard_sentences:
+                # 검증된 직접 CAS·구조 일치로 이미 기준 미만이 판정된 경우: 같은 지정번호 후보 문구 대신 판정 근거를 쓴다.
+                sentences = hazard_sentences
+            elif engine_final == "확인 범위 내 비해당" and explicit_exclusion and candidate_id:
+                target = f"'{candidate_name}'(고유번호 {candidate_id})"
+                sentences = [f"본 물질은 「인체등유해성물질」 {target}의 명시적 제외조건에 해당합니다. 확인한 다른 규제 카테고리에서는 일치 항목이 확인되지 않았습니다."]
+                citations.append(f"「인체등유해성물질」 고유번호 {candidate_id} (명시적 제외)")
+            elif explicit_exclusion and candidate_id:
                 target = f"'{candidate_name}'(고유번호 {candidate_id})"
                 sentences = [f"본 물질은 「인체등유해성물질」 {target}의 명시적 제외조건과 일치합니다. 다른 규제 적용 여부는 전문가 검토가 필요합니다."]
                 citations.append(f"「인체등유해성물질」 고유번호 {candidate_id} (명시적 제외 후보)")
@@ -400,7 +410,9 @@ def build_plain_summary(
                     sentences = ["판정에 필요한 정보가 부족하여 전문가 검토가 필요합니다."]
             # Keep confirmed categories even when the final trust gate is HOLD.
 
-        reviewed_categories = [x.strip() for x in candidate_category.split("·") if x.strip()]
+        # 앞 단계가 이미 근거로 판정한 후보(기준 미만·제외 확인)는 검토 후보 카테고리로 표시하지 않는다.
+        resolved = engine_final in {"기준 미만", "확인 범위 내 비해당"}
+        reviewed_categories = [] if resolved else [x.strip() for x in candidate_category.split("·") if x.strip()]
         if not cross_rows.empty:
             reviewed_categories.extend(
                 REGIME_LABELS.get(clean(row.get("regime")), clean(row.get("regime_label")))

@@ -76,6 +76,35 @@ class NoCasScopeTest(unittest.TestCase):
         self.assertEqual(attached.loc[0,"no_cas_scope_primary_match_type"], "EXPLICIT_EXCEPTION_CAS")
         self.assertIn("2,6-톨루엔디아민 제외", attached.loc[0,"no_cas_scope_primary_regulatory_name"])
 
+    def _attach(self, cas, name, **summary_cols):
+        inv = pd.DataFrame([{"material_id": "X1", "chemical_name": name, "cas": cas}])
+        rows = screen_no_cas_scopes(inv, self.index)
+        summary = pd.DataFrame([{
+            "material_id": "X1", "gate_decision": "보류(비해당 단정 불가)",
+            "review_regulatory_text": "", **summary_cols,
+        }])
+        return attach_no_cas_candidates(summary, rows[rows["material_id"].eq("X1")])
+
+    def test_explicit_exclusion_only_keeps_non_regulated_decision(self):
+        attached = self._attach("75-60-5", "디메틸아르신산", final_decision="확인 범위 내 비해당")
+        self.assertTrue(bool(attached.loc[0, "no_cas_scope_primary_explicit_exception"]))
+        self.assertEqual(attached.loc[0, "final_decision"], "확인 범위 내 비해당")
+        self.assertEqual(attached.loc[0, "gate_decision"], "보류(비해당 단정 불가)")
+
+    def test_candidate_already_evaluated_by_verified_match_keeps_decision(self):
+        attached = self._attach("62-53-3", "아닐린", final_decision="기준 미만", designation_id="97-1-156")
+        self.assertIn("97-1-156", attached.loc[0, "no_cas_scope_designation_ids"])
+        self.assertEqual(attached.loc[0, "final_decision"], "기준 미만")
+
+    def test_unverified_candidate_is_still_held(self):
+        # 승인된 모체 규칙이 없어 앞 단계가 검토 필요로 둔 경우는 기존대로 보류한다.
+        attached = self._attach("62-53-3", "아닐린", final_decision="전문가 검토 필요")
+        self.assertEqual(attached.loc[0, "final_decision"], "전문가 검토 필요")
+        self.assertEqual(attached.loc[0, "gate_decision"], "보류(포괄 규제범위 후보)")
+        # 같은 지정번호 후보라도 앞 단계가 평가한 지정번호가 아니면 덮어쓴다.
+        attached = self._attach("62-53-3", "아닐린", final_decision="기준 미만", designation_id="97-1-999")
+        self.assertEqual(attached.loc[0, "final_decision"], "전문가 검토 필요")
+
 
 if __name__ == "__main__":
     unittest.main()
