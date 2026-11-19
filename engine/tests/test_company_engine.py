@@ -602,3 +602,25 @@ class ExcelDateCasRepairTest(unittest.TestCase):
         self.assertEqual(normalize_cas("2024-05-03"), "2024-05-03")  # 복원해도 체크섬 불일치
         self.assertEqual(normalize_cas("000-00-0"), "000-00-0")
         self.assertEqual(normalize_cas(None), "")
+
+
+class MasterThresholdColumnTest(unittest.TestCase):
+    """2026-5 원본 엑셀의 급성·만성·생태 기준값이 열 밀림 없이 들어갔는지 지킨다."""
+
+    # 원본 엑셀 행 번호 -> (급성, 만성, 생태). CAS 없는 검토 대상 행에서 열이 밀렸던 5건.
+    ORIGINAL = {
+        384: ("-", "0.1", "-"),      # 97-1-300 o-톨루이딘 염: 만성
+        1202: ("-", "25", "25"),     # 2022-1-1106 잔사, 연료유: 만성/생태
+        1268: ("25", "-", "-"),      # 2023-1-1172 황화 리튬 반응생성물: 급성
+        1280: ("-", "-", "25"),      # 2024-1-1184 보레이트: 생태
+        1327: ("-", "-", "2.5"),     # 2025-1-1231 불포화 알코올 중합체: 생태
+    }
+
+    def test_shifted_rows_keep_original_threshold_columns(self):
+        from company_engine import DEFAULT_MASTER
+        master = pd.read_csv(DEFAULT_MASTER, dtype=str).fillna("")
+        master = master[master["notice"].eq("2026-5")]
+        rows = master.set_index(pd.to_numeric(master["source_excel_row"]).astype(int))
+        for row, expected in self.ORIGINAL.items():
+            got = tuple(rows.loc[row, ["acute_threshold_raw", "chronic_threshold_raw", "eco_threshold_raw"]])
+            self.assertEqual(got, expected, f"원본 {row}행 기준값 열이 원본과 다릅니다")
