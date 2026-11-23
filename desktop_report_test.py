@@ -6,6 +6,8 @@ from io import BytesIO
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 
+# The application initializes engine/ as an import path in desktop_backend.
+import desktop_backend  # noqa: F401
 from desktop_report import (
     COLUMNS, adapt_desktop_workbook, build_desktop_plain_summary,
 )
