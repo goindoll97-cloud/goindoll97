@@ -60,7 +60,7 @@ jobs:
       - name: Offline rule screening smoke test (without Ollama)
         run: python desktop_smoke_test.py
 
-      - name: Desktop report: four decisions and exactly three worksheets
+      - name: "Desktop report - four decisions and exactly three worksheets"
         run: python desktop_report_test.py
 
       - name: Effective-date and approved-rule reporting regression test
