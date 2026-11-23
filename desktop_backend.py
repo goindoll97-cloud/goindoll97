@@ -260,6 +260,13 @@ def screen_inventory(
 ) -> dict:
     progress("인벤토리 Excel/CSV 파일을 불러오는 중...")
     raw = read_inventory(None, default_path=Path(source))
+    # Preserve the supplied inventory ID in the desktop output. Shared Streamlit
+    # import behavior is unchanged; only desktop recognizes a bare ID header.
+    if "material_id" not in raw.columns:
+        for name in raw.columns:
+            if str(name).strip().lower() in {"id", "inventory id", "inventory_id"}:
+                raw = raw.rename(columns={name: "material_id"})
+                break
     if raw.empty:
         raise ValueError("인벤토리에 물질 행이 없습니다.")
 
