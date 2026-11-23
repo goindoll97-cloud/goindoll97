@@ -50,7 +50,7 @@ from cross_regime import (
 )
 from local_llm import analyze_cases, build_llm_review_cases, get_local_llm_status, merge_llm_audit
 from no_cas_scope import build_no_cas_scope_index, screen_no_cas_scopes, attach_no_cas_candidates
-from plain_report import build_plain_summary
+from desktop_report import build_desktop_plain_summary, adapt_desktop_workbook
 from result_store import save_result_workbook
 from scope_engine import load_extended_scope_rules
 from trust_gate import (
@@ -224,9 +224,9 @@ def _overall(row: pd.Series) -> str:
 
 
 def _create_workbook(result: dict) -> bytes:
-    """Always include complete regulatory audit sheets in desktop Excel files."""
+    """Export exactly the three reader-facing desktop worksheets."""
     summary = result["summary"]
-    return build_result_workbook(
+    full_workbook = build_result_workbook(
         summary,
         result["evidence"],
         result["enriched"],
@@ -249,8 +249,9 @@ def _create_workbook(result: dict) -> bytes:
         category_log=result["category_log"],
         legal_basis=result["legal_basis"],
         no_cas_candidates=result["no_cas_candidates"],
-        detailed=True,
+        detailed=False,
     )
+    return adapt_desktop_workbook(full_workbook, result["plain"])
 
 
 def screen_inventory(
@@ -328,7 +329,7 @@ def screen_inventory(
         "no_cas_candidates": no_cas_candidates,
         "llm_cases": llm_cases,
         "llm_audit": llm_audit,
-        "plain": build_plain_summary(
+        "plain": build_desktop_plain_summary(
             summary, evidence, cross_detail, catalog["notice"]
         ),
     }
@@ -378,7 +379,7 @@ def rerun_ai(result: dict, progress: Progress) -> dict:
 
     result["llm_audit"] = combined
     result["summary"] = merge_llm_audit(result["summary_before_llm"], combined)
-    result["plain"] = build_plain_summary(
+    result["plain"] = build_desktop_plain_summary(
         result["summary"], result["evidence"],
         result["cross_detail"], result["catalog"]["notice"]
     )
