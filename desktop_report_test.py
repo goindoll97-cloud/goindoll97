@@ -8,6 +8,7 @@ from openpyxl import Workbook, load_workbook
 
 # The application initializes engine/ as an import path in desktop_backend.
 import desktop_backend  # noqa: F401
+from desktop_backend import _overall
 from desktop_report import (
     COLUMNS, adapt_desktop_workbook, build_desktop_plain_summary,
 )
@@ -78,6 +79,35 @@ def sample_evidence():
 
 
 def main():
+    # Each non-human-hazard regime reports "법규 데이터 확인 필요" when the CAS
+    # has no matching entry. This is not in itself a reason to mask an
+    # otherwise verified non-match or below-threshold determination.
+    none = {
+        "HUMAN_HAZARD_decision": "확인 범위 내 비해당",
+        "ACCIDENT_PREPAREDNESS_decision": "법규 데이터 확인 필요",
+        "RESTRICTED_decision": "법규 데이터 확인 필요",
+        "PROHIBITED_decision": "법규 데이터 확인 필요",
+    }
+    assert _overall(pd.Series(none)) == "확인 범위 내 비해당"
+    assert _overall(pd.Series({**none, "HUMAN_HAZARD_decision": "기준 미만"})) == "확인 범위 내 비해당"
+    assert _overall(pd.Series({**none, "HUMAN_HAZARD_decision": "전문가 검토 필요"})) == "추가 확인 필요"
+    assert _overall(pd.Series({**none, "HUMAN_HAZARD_decision": ""})) == "추가 확인 필요"
+    assert _overall(pd.Series({**none, "RESTRICTED_decision": "해당 후보·검토 필요"})) == "규제 해당 후보"
+    assert _overall(pd.Series({**none, "RESTRICTED_decision": "규제 해당"})) == "규제 해당"
+    assert _overall(pd.Series({**none, "PROHIBITED_decision": "조건 검토 필요"})) == "추가 확인 필요"
+
+    # The visible report must not lose the non-match to the no-hit statuses
+    # or the future-notice warning on a separate status column.
+    real_none = sample_summary().loc[[2]].copy()
+    # Match desktop_backend.screen_inventory, which attaches this category
+    # status before computing the overall decision.
+    real_none["HUMAN_HAZARD_decision"] = real_none["final_decision"]
+    real_none["overall_decision"] = real_none.apply(_overall, axis=1)
+    display_none = build_desktop_plain_summary(
+        real_none, pd.DataFrame(), pd.DataFrame(), "2026-5"
+    )
+    assert display_none.iloc[0]["판정결과"] == "비해당"
+
     summary = sample_summary()
     evidence = sample_evidence()
     hints = pd.DataFrame([{"material_id": "H1", "cas": "71-43-2"}])
@@ -103,7 +133,7 @@ def main():
     assert "인체급성유해성물질: 기준 25% 이상, 실제 함량 15% — 기준 미만" in rows.loc["P1", "판단근거"]
     assert "인체만성유해성물질: 기준 10% 이상, 실제 함량 15% — 규제 해당" in rows.loc["P1", "판단근거"]
     assert "생태유해성물질: 기준 5% 이상, 실제 함량 15% — 규제 해당" in rows.loc["P1", "판단근거"]
-    assert rows.loc["B1", "인체급성 기준(%)"] == 10
+    assert rows.loc["B1", "법규 인체급성 기준(%)"] == 10
     assert rows.loc["B1", "인체급성 판정"] == "기준 미만"
     assert rows.loc["H1", "추가 확인사항"].startswith("확인하지 못한 사항:")
 

@@ -68,7 +68,7 @@ def main():
         assert result["workbook"].startswith(b"PK")
         assert "인벤토리 ID" in plain.columns
         assert "구조초안 힌트" in plain.columns
-        assert "인체급성 기준(%)" in plain.columns
+        assert "법규 인체급성 기준(%)" in plain.columns
         assert "추가 확인사항" in plain.columns
     print("PASS: future notice, approved CAS positive evidence, audit separation, AI OFF")
 
