@@ -56,17 +56,19 @@ def main():
             ("50-00-0", "인체급성유해성물질"),
         ):
             row = plain.loc[cas]
-            assert row["판정결과"] == "승인 규칙상 해당", (cas, row.to_dict())
+            assert row["판정결과"] == "규제 해당", (cas, row.to_dict())
             assert category in row["규제 카테고리"], (cas, row.to_dict())
             assert row["검증 상태"].startswith("보류"), (cas, row.to_dict())
             assert "2026-12-19" in summary.loc[cas, "law_version_status"], cas
             assert row["법적 근거"] != "-", cas
         invalid = plain.loc["000-00-0"]
-        assert invalid["판정결과"] == "보류", invalid.to_dict()
+        assert invalid["판정결과"] == "보류(추가 확인 필요)", invalid.to_dict()
         assert "물질식별" in invalid["검증 상태"], invalid.to_dict()
         assert not result["llm_audit"].shape[0]
         assert result["workbook"].startswith(b"PK")
-        assert "검토 후보 카테고리" in plain.columns
+        assert "인벤토리 ID" in plain.columns
+        assert "구조초안 힌트" in plain.columns
+        assert "인체급성 기준(%)" in plain.columns
         assert "추가 확인사항" in plain.columns
     print("PASS: future notice, approved CAS positive evidence, audit separation, AI OFF")
 
