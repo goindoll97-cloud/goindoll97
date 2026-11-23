@@ -51,6 +51,7 @@ from cross_regime import (
 from local_llm import analyze_cases, build_llm_review_cases, get_local_llm_status, merge_llm_audit
 from no_cas_scope import build_no_cas_scope_index, screen_no_cas_scopes, attach_no_cas_candidates
 from desktop_report import build_desktop_plain_summary, adapt_desktop_workbook
+from desktop_results import keep_latest_desktop_result
 from result_store import save_result_workbook
 from scope_engine import load_extended_scope_rules
 from trust_gate import (
@@ -264,6 +265,26 @@ def _create_workbook(result: dict) -> bytes:
     return adapt_desktop_workbook(full_workbook, result["plain"])
 
 
+def _finalize_desktop_save(saved: dict, *, source_path: str = "") -> dict:
+    """Preserve the new result, then prune only the program's older XLSX files.
+
+    A locked older Excel remains in place with an explicit warning; failures
+    never discard the completed new workbook or the current UI result.
+    """
+    try:
+        saved.update(keep_latest_desktop_result(
+            RESULTS_DIR, saved, protected_paths=(source_path,)
+        ))
+    except (OSError, ValueError) as exc:
+        saved["cleanup_removed"] = 0
+        saved["cleanup_failed"] = []
+        saved["manifest_reset"] = False
+        saved["cleanup_warning"] = (
+            "새 판정은 저장했지만 이전 결과 자동 정리에 실패했습니다: " + str(exc)
+        )
+    return saved
+
+
 def screen_inventory(
     catalog: dict, source: str, fetch_pubchem: bool,
     use_local_ai: bool, progress: Progress,
@@ -333,6 +354,7 @@ def screen_inventory(
     summary = merge_llm_audit(summary, llm_audit)
     result = {
         "catalog": catalog,
+        "source_path": str(Path(source).resolve()),
         "summary": summary,
         "summary_before_llm": before_ai,
         "evidence": evidence,
@@ -363,7 +385,7 @@ def screen_inventory(
         filename_prefix="사업장_화학물질_규제판정",
     )
     result["workbook"] = workbook
-    result["saved"] = saved
+    result["saved"] = _finalize_desktop_save(saved, source_path=source)
     progress("분석이 완료되었습니다.")
     return result
 
@@ -411,5 +433,8 @@ def rerun_ai(result: dict, progress: Progress) -> dict:
         },
         directory=RESULTS_DIR,
         filename_prefix="사업장_화학물질_규제판정",
+    )
+    result["saved"] = _finalize_desktop_save(
+        result["saved"], source_path=result.get("source_path", "")
     )
     return result
