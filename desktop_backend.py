@@ -1,6 +1,7 @@
-"""Shared regulatory-screening workflow for the PySide6 desktop application.
+"""Desktop shell around the shared screening pipeline (engine/screening_pipeline.py).
 
-Streamlit remains unchanged; this module calls the same approved-rule engine.
+The Streamlit app calls the same pipeline; this module only adds the desktop
+workspace, inventory file reading and result-file saving/cleanup.
 """
 from __future__ import annotations
 
@@ -34,32 +35,20 @@ import company_engine as company
 import cross_regime
 import regulatory_api
 from company_engine import (
-    build_result_workbook,
     load_approved_master,
     load_promoted_salt_rules,
-    prepare_company_inventory,
     read_inventory,
-    screen_company_inventory,
 )
 from cross_regime import (
     RULE_COLUMNS,
-    add_regulatory_category_columns,
     fetch_cross_regime_candidates,
     load_approved_cross_regime_rules,
-    screen_cross_regimes,
 )
-from local_llm import analyze_cases, build_llm_review_cases, get_local_llm_status, merge_llm_audit
-from no_cas_scope import build_no_cas_scope_index, screen_no_cas_scopes, attach_no_cas_candidates
-from desktop_report import build_desktop_plain_summary, adapt_desktop_workbook
+from local_llm import get_local_llm_status
 from desktop_results import keep_latest_desktop_result
 from result_store import save_result_workbook
 from scope_engine import load_extended_scope_rules
-from trust_gate import (
-    apply_trust_gate,
-    build_category_search_log,
-    build_legal_basis,
-    cross_rule_availability,
-)
+from screening_pipeline import rerun_ai as _rerun_ai, run_screening
 
 Progress = Callable[[str], None]
 
@@ -206,65 +195,6 @@ def initialize(online_law: bool, progress: Progress) -> dict:
     }
 
 
-def _overall(row: pd.Series) -> str:
-    cols = (
-        "HUMAN_HAZARD_decision",
-        "ACCIDENT_PREPAREDNESS_decision",
-        "RESTRICTED_decision",
-        "PROHIBITED_decision",
-    )
-    values = [str(row.get(col, "")) for col in cols]
-    if "규제 해당" in values:
-        return "규제 해당"
-    if any("해당 후보" in v for v in values):
-        return "규제 해당 후보"
-    # cross_regime uses "법규 데이터 확인 필요" for a CAS no-hit as well as
-    # missing coverage. A no-hit by itself is not an unresolved candidate.
-    # Preserve the human-hazard engine's genuine below-threshold/non-match
-    # outcomes. Coverage and currentness warnings remain in the trust gate;
-    # unverified structure and scope candidates are still explicitly held.
-    if any(v in {"추가정보 필요", "조건 검토 필요",
-                 "전문가 검토 필요", "물질정보 확인 실패", "정보 부족"} for v in values):
-        return "추가 확인 필요"
-    if str(row.get("HUMAN_HAZARD_decision", "")).strip() in {
-        "기준 미만", "확인 범위 내 비해당"
-    }:
-        return "확인 범위 내 비해당"
-    # Unknown/absent main-regime status must never become non-regulated.
-    return "추가 확인 필요"
-
-
-def _create_workbook(result: dict) -> bytes:
-    """Export exactly the three reader-facing desktop worksheets."""
-    summary = result["summary"]
-    full_workbook = build_result_workbook(
-        summary,
-        result["evidence"],
-        result["enriched"],
-        result["pubchem_audit"],
-        result["review"],
-        result["catalog"]["api_status"],
-        result["catalog"]["notice"],
-        len(result["catalog"]["master"]),
-        cross_summary=summary[[
-            "material_id", "HUMAN_HAZARD_decision",
-            "ACCIDENT_PREPAREDNESS_decision", "RESTRICTED_decision",
-            "PROHIBITED_decision", "applicable_regulatory_categories",
-            "review_regulatory_categories", "overall_decision"
-        ]].copy(),
-        cross_detail=result["cross_detail"],
-        cross_api_status=result["catalog"]["cross_api_status"],
-        llm_audit=result["llm_audit"],
-        llm_status=result["catalog"]["ai_status"],
-        gate_log=result["gate_log"],
-        category_log=result["category_log"],
-        legal_basis=result["legal_basis"],
-        no_cas_candidates=result["no_cas_candidates"],
-        detailed=False,
-    )
-    return adapt_desktop_workbook(full_workbook, result["plain"])
-
-
 def _finalize_desktop_save(saved: dict, *, source_path: str = "") -> dict:
     """Preserve the new result, then prune only the program's older XLSX files.
 
@@ -285,98 +215,10 @@ def _finalize_desktop_save(saved: dict, *, source_path: str = "") -> dict:
     return saved
 
 
-def screen_inventory(
-    catalog: dict, source: str, fetch_pubchem: bool,
-    use_local_ai: bool, progress: Progress,
-) -> dict:
-    progress("인벤토리 Excel/CSV 파일을 불러오는 중...")
-    raw = read_inventory(None, default_path=Path(source))
-    # Preserve the supplied inventory ID in the desktop output. Shared Streamlit
-    # import behavior is unchanged; only desktop recognizes a bare ID header.
-    if "material_id" not in raw.columns:
-        for name in raw.columns:
-            if str(name).strip().lower() in {"id", "inventory id", "inventory_id"}:
-                raw = raw.rename(columns={name: "material_id"})
-                break
-    if raw.empty:
-        raise ValueError("인벤토리에 물질 행이 없습니다.")
-
-    progress(f"{len(raw):,}개 물질의 CAS와 구조정보를 정리하는 중...")
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    enriched, pubchem_audit = prepare_company_inventory(raw, fetch_pubchem=fetch_pubchem)
-
-    progress("인체등유해성물질 규제 기준을 대조하는 중...")
-    summary, evidence, review = screen_company_inventory(
-        enriched, catalog["master"], catalog["salt_rules"],
-        catalog["notice"], extended_rules=catalog["extended"]
-    )
-    progress("사고대비·제한·금지물질 규제를 대조하는 중...")
-    cross_summary, cross_detail = screen_cross_regimes(
-        enriched, catalog["cross_approved"], catalog["cross_candidates"]
-    )
-    summary = summary.merge(cross_summary, on="material_id", how="left")
-    summary["HUMAN_HAZARD_decision"] = summary["final_decision"]
-    summary["overall_decision"] = summary.apply(_overall, axis=1)
-    summary = add_regulatory_category_columns(summary)
-
-    progress("규제 카테고리 검색기록과 법률근거를 검증하는 중...")
-    availability = cross_rule_availability(
-        catalog["cross_approved"], catalog["cross_candidates"],
-        catalog["cross_api_status"]
-    )
-    category_log = build_category_search_log(
-        summary, cross_detail, availability, catalog["notice"], len(catalog["master"])
-    )
-    legal_basis = build_legal_basis(evidence, cross_detail, catalog["notice"])
-    summary, gate_log = apply_trust_gate(
-        summary, evidence, cross_detail, category_log, legal_basis,
-        catalog["api_status"]
-    )
-
-    progress("CAS가 없는 포괄 규제범위 후보를 검토하는 중...")
-    no_cas_index = build_no_cas_scope_index(catalog["master"], catalog["notice"])
-    no_cas_candidates = screen_no_cas_scopes(enriched, no_cas_index)
-    summary = attach_no_cas_candidates(summary, no_cas_candidates)
-
-    before_ai = summary.copy()
-    llm_cases = build_llm_review_cases(summary, cross_detail, evidence)
-    llm_audit = pd.DataFrame()
-    if use_local_ai:
-        if not catalog["ai_status"].get("ready"):
-            raise RuntimeError("로컬 AI가 연결되지 않았습니다. AI를 OFF로 설정하세요.")
-        max_cases = min(len(llm_cases), 40)
-        progress(f"로컬 AI가 검토 필요 사례 {max_cases}건을 분석하는 중...")
-        def on_ai_progress(done: int, total: int) -> None:
-            progress(f"로컬 AI 분석 중: {done}/{total}건")
-        llm_audit = analyze_cases(
-            llm_cases, max_cases=max_cases, on_progress=on_ai_progress
-        )
-    summary = merge_llm_audit(summary, llm_audit)
-    result = {
-        "catalog": catalog,
-        "source_path": str(Path(source).resolve()),
-        "summary": summary,
-        "summary_before_llm": before_ai,
-        "evidence": evidence,
-        "review": review,
-        "enriched": enriched,
-        "pubchem_audit": pubchem_audit,
-        "cross_detail": cross_detail,
-        "category_log": category_log,
-        "gate_log": gate_log,
-        "legal_basis": legal_basis,
-        "no_cas_candidates": no_cas_candidates,
-        "llm_cases": llm_cases,
-        "llm_audit": llm_audit,
-        "plain": build_desktop_plain_summary(
-            summary, evidence, cross_detail, catalog["notice"]
-        ),
-    }
-
-    progress("판정 결과 Excel 파일을 생성하고 저장하는 중...")
-    workbook = _create_workbook(result)
+def _save(result: dict, source_path: str = "") -> dict:
+    catalog, summary = result["catalog"], result["summary"]
     saved = save_result_workbook(
-        workbook, catalog["notice"], len(summary),
+        result["workbook"], catalog["notice"], len(summary),
         api_status=catalog["api_status"],
         gate_counts={
             str(k): int(v) for k, v in summary["gate_decision"].value_counts().items()
@@ -384,57 +226,31 @@ def screen_inventory(
         directory=RESULTS_DIR,
         filename_prefix="사업장_화학물질_규제판정",
     )
-    result["workbook"] = workbook
-    result["saved"] = _finalize_desktop_save(saved, source_path=source)
+    return _finalize_desktop_save(saved, source_path=source_path)
+
+
+def screen_inventory(
+    catalog: dict, source: str, fetch_pubchem: bool,
+    use_local_ai: bool, progress: Progress,
+) -> dict:
+    progress("인벤토리 Excel/CSV 파일을 불러오는 중...")
+    raw = read_inventory(None, default_path=Path(source))
+    if raw.empty:
+        raise ValueError("인벤토리에 물질 행이 없습니다.")
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    result = run_screening(
+        raw, catalog, fetch_pubchem=fetch_pubchem,
+        use_local_ai=use_local_ai, progress=progress,
+    )
+    result["source_path"] = str(Path(source).resolve())
+    progress("판정 결과 Excel 파일을 저장하는 중...")
+    result["saved"] = _save(result, source)
     progress("분석이 완료되었습니다.")
     return result
 
 
 def rerun_ai(result: dict, progress: Progress) -> dict:
-    if not result["catalog"]["ai_status"].get("ready"):
-        raise RuntimeError("로컬 AI를 사용할 수 없습니다.")
-    done_ids = set()
-    audit = result["llm_audit"]
-    if not audit.empty and {"case_id", "llm_status"}.issubset(audit.columns):
-        done_ids = set(audit.loc[
-            audit["llm_status"].astype(str).eq("VALIDATED_OUTPUT"), "case_id"
-        ].astype(str))
-    remaining = [
-        case for case in result["llm_cases"]
-        if str(case.get("case_id")) not in done_ids
-    ]
-    if not remaining:
-        return result
-
-    def on_ai_progress(done: int, total: int) -> None:
-        progress(f"AI 보류·오류 사례 재검토 중: {done}/{total}건")
-
-    updated_audit = analyze_cases(
-        remaining, max_cases=len(remaining), on_progress=on_ai_progress
-    )
-    combined = pd.concat([audit, updated_audit], ignore_index=True)
-    if "case_id" in combined.columns:
-        combined = combined.drop_duplicates("case_id", keep="last").reset_index(drop=True)
-
-    result["llm_audit"] = combined
-    result["summary"] = merge_llm_audit(result["summary_before_llm"], combined)
-    result["plain"] = build_desktop_plain_summary(
-        result["summary"], result["evidence"],
-        result["cross_detail"], result["catalog"]["notice"]
-    )
-    progress("재검토 결과 Excel 파일 저장 중...")
-    result["workbook"] = _create_workbook(result)
-    result["saved"] = save_result_workbook(
-        result["workbook"], result["catalog"]["notice"], len(result["summary"]),
-        api_status=result["catalog"]["api_status"],
-        gate_counts={
-            str(k): int(v)
-            for k, v in result["summary"]["gate_decision"].value_counts().items()
-        },
-        directory=RESULTS_DIR,
-        filename_prefix="사업장_화학물질_규제판정",
-    )
-    result["saved"] = _finalize_desktop_save(
-        result["saved"], source_path=result.get("source_path", "")
-    )
+    result = _rerun_ai(result, progress)
+    result["saved"] = _save(result, result.get("source_path", ""))
     return result

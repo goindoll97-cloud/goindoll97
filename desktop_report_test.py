@@ -1,4 +1,4 @@
-"""Desktop-only output regression: same engine, four visible labels, three Excel tabs."""
+"""Shared result report regression (web and desktop): four visible labels, three Excel tabs."""
 from __future__ import annotations
 
 from io import BytesIO
@@ -8,9 +8,8 @@ from openpyxl import Workbook, load_workbook
 
 # The application initializes engine/ as an import path in desktop_backend.
 import desktop_backend  # noqa: F401
-from desktop_backend import _overall
-from desktop_report import (
-    COLUMNS, adapt_desktop_workbook, build_desktop_plain_summary,
+from screening_pipeline import (
+    COLUMNS, adapt_result_workbook, build_result_table, overall_decision as _overall,
 )
 from plain_report import _plain_result
 
@@ -99,19 +98,32 @@ def main():
     # The visible report must not lose the non-match to the no-hit statuses
     # or the future-notice warning on a separate status column.
     real_none = sample_summary().loc[[2]].copy()
-    # Match desktop_backend.screen_inventory, which attaches this category
+    # Match screening_pipeline.run_screening, which attaches this category
     # status before computing the overall decision.
     real_none["HUMAN_HAZARD_decision"] = real_none["final_decision"]
     real_none["overall_decision"] = real_none.apply(_overall, axis=1)
-    display_none = build_desktop_plain_summary(
+    display_none = build_result_table(
         real_none, pd.DataFrame(), pd.DataFrame(), "2026-5"
     )
     assert display_none.iloc[0]["판정결과"] == "비해당"
 
+    # Direct approved-rule positive that the gate holds for a scope candidate
+    # (e.g. sodium hydroxide) must read 규제 해당, like any other positive;
+    # without that rule positive the same hold stays 보류.
+    held_positive = sample_summary().loc[[0]].copy()
+    held_positive["final_decision"] = "전문가 검토 필요"
+    held_positive["overall_decision"] = "추가 확인 필요"
+    held_positive["gate_decision"] = "보류(포괄 규제범위 후보)"
+    held_positive["gate_hold_reason"] = "포괄 규제범위 동일성 확인 필요"
+    held_positive["law_version_status"] = "승인 규칙 최신"
+    assert build_result_table(held_positive, pd.DataFrame(), pd.DataFrame(), "2026-5").iloc[0]["판정결과"] == "규제 해당"
+    held_positive["rule_based_decision"] = ""
+    assert build_result_table(held_positive, pd.DataFrame(), pd.DataFrame(), "2026-5").iloc[0]["판정결과"] == "보류(추가 확인 필요)"
+
     summary = sample_summary()
     evidence = sample_evidence()
     hints = pd.DataFrame([{"material_id": "H1", "cas": "71-43-2"}])
-    desktop = build_desktop_plain_summary(
+    desktop = build_result_table(
         summary, evidence, pd.DataFrame(), "2026-5", draft_hints=hints
     )
     assert list(desktop.columns) == COLUMNS
@@ -143,7 +155,7 @@ def main():
     candidate["overall_decision"] = "규제 해당 후보"
     cross = pd.DataFrame([{"material_id": "B1", "regime": "RESTRICTED",
                            "regime_label": "제한물질", "decision": "해당 후보·검토 필요"}])
-    held = build_desktop_plain_summary(candidate, evidence, cross, "2026-5")
+    held = build_result_table(candidate, evidence, cross, "2026-5")
     assert held.iloc[0]["판정결과"] == "보류(추가 확인 필요)"
 
     # An unverified structural match is not accepted as confirmed evidence.
@@ -152,7 +164,7 @@ def main():
         "material_id": "H1", "evidence_status": "STRUCTURE_UNVERIFIED_HOLD",
         "acute_decision": "해당", "acute_threshold_pct": 0.5,
     }])
-    assert build_desktop_plain_summary(
+    assert build_result_table(
         tentative, provisional, pd.DataFrame(), "2026-5"
     ).iloc[0]["판정결과"] == "보류(추가 확인 필요)"
 
@@ -166,7 +178,7 @@ def main():
     book.create_sheet("상세판정요약")
     intermediate = BytesIO()
     book.save(intermediate)
-    data = adapt_desktop_workbook(intermediate.getvalue(), desktop)
+    data = adapt_result_workbook(intermediate.getvalue(), desktop)
     output = load_workbook(BytesIO(data))
     assert output.sheetnames == ["판정결과", "결과읽는법", "법규버전"], output.sheetnames
     assert output["판정결과"]["A1"].value == "인벤토리 ID"

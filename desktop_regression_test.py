@@ -40,6 +40,7 @@ def main():
             {"material_id": "R01", "chemical_name": "Sodium cyanide", "cas": "143-33-9", "concentration_pct": 2},
             {"material_id": "R02", "chemical_name": "Formaldehyde", "cas": "50-00-0", "concentration_pct": 2},
             {"material_id": "R03", "chemical_name": "Unknown CAS", "cas": "000-00-0", "concentration_pct": 1},
+            {"material_id": "R04", "chemical_name": "Sodium hydroxide", "cas": "1310-73-2", "concentration_pct": 5},
         ])
         source = Path(temp) / "regression.csv"
         inventory.to_csv(source, index=False)
@@ -61,6 +62,8 @@ def main():
             assert row["검증 상태"].startswith("보류"), (cas, row.to_dict())
             assert "2026-12-19" in summary.loc[cas, "law_version_status"], cas
             assert row["법적 근거"] != "-", cas
+        # Approved-rule positive held only by a scope candidate still reads positive.
+        assert plain.loc["1310-73-2", "판정결과"] == "규제 해당", plain.loc["1310-73-2"].to_dict()
         invalid = plain.loc["000-00-0"]
         assert invalid["판정결과"] == "보류(추가 확인 필요)", invalid.to_dict()
         assert "물질식별" in invalid["검증 상태"], invalid.to_dict()
