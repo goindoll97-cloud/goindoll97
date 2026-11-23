@@ -225,7 +225,12 @@ def _overall(row: pd.Series) -> str:
     if any(v in {"추가정보 필요", "조건 검토 필요",
                  "전문가 검토 필요", "물질정보 확인 실패", "정보 부족"} for v in values):
         return "추가 확인 필요"
-    return "확인 범위 내 비해당"
+    if str(row.get("HUMAN_HAZARD_decision", "")).strip() in {
+        "기준 미만", "확인 범위 내 비해당"
+    }:
+        return "확인 범위 내 비해당"
+    # Unknown/absent main-regime status must never become non-regulated.
+    return "추가 확인 필요"
 
 
 def _create_workbook(result: dict) -> bytes:
