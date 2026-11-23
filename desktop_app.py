@@ -484,6 +484,15 @@ class DesktopWindow(QMainWindow):
         else:
             self.result = data
             self._show_result()
+            cleanup_warning = data.get("saved", {}).get("cleanup_warning", "")
+            if cleanup_warning:
+                QMessageBox.warning(
+                    self, "기존 결과파일 정리 필요",
+                    "새로운 판정결과는 정상 저장했습니다.\n"
+                    "다음 이전 결과파일은 삭제하지 못했습니다.\n\n"
+                    + cleanup_warning
+                    + "\n\n엑셀 파일이 열려 있다면 닫은 후 다시 판정하세요."
+                )
         self.statusBar().showMessage("완료")
         self.refresh_button.setEnabled(True)
         self.run_button.setEnabled(self.catalog is not None)
@@ -554,7 +563,11 @@ class DesktopWindow(QMainWindow):
         self.result_table.setModel(self.result_model)
         count = len(data["summary"])
         file_name = data["saved"]["file_name"]
-        self.info.setText(f"{count:,}건 판정 완료  |  결과 저장: {file_name}")
+        removed = data["saved"].get("cleanup_removed", 0)
+        self.info.setText(
+            f"{count:,}건 판정 완료  |  결과 저장: {file_name}"
+            + (f"  |  이전 결과 {removed}개 정리" if removed else "")
+        )
         self.export_button.setEnabled(True)
 
     def export_excel(self):
