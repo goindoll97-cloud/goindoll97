@@ -91,6 +91,7 @@ def main():
     assert _overall(pd.Series(none)) == "확인 범위 내 비해당"
     assert _overall(pd.Series({**none, "HUMAN_HAZARD_decision": "기준 미만"})) == "확인 범위 내 비해당"
     assert _overall(pd.Series({**none, "HUMAN_HAZARD_decision": "전문가 검토 필요"})) == "추가 확인 필요"
+    assert _overall(pd.Series({**none, "HUMAN_HAZARD_decision": ""})) == "추가 확인 필요"
     assert _overall(pd.Series({**none, "RESTRICTED_decision": "해당 후보·검토 필요"})) == "규제 해당 후보"
     assert _overall(pd.Series({**none, "RESTRICTED_decision": "규제 해당"})) == "규제 해당"
     assert _overall(pd.Series({**none, "PROHIBITED_decision": "조건 검토 필요"})) == "추가 확인 필요"
