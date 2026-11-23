@@ -56,7 +56,29 @@ def main():
             assert list(result["plain"].columns)[0] == "인벤토리 ID"
             assert set(result["plain"]["구조초안 힌트"]) == {"없음"}
         assert Path(result["saved"]["path"]).read_bytes() == result["workbook"]
-    print("PASS: portable workspace, offline/AI-OFF screening, three-sheet Excel exported")
+        # A second completed screening must leave ONLY the newest program
+        # result in workspace/results. No other user files are deleted.
+        first_result_path = Path(result["saved"]["path"])
+        historical = backend.RESULTS_DIR / "사업장_화학물질_규제판정_2026-5_2026-01-01_00-00-00_KST.xlsx"
+        historical.write_bytes(b"outdated previous program result")
+        personal_file = backend.RESULTS_DIR / "my_inventory_notes.xlsx"
+        personal_file.write_bytes(b"personal: keep")
+        second = backend.screen_inventory(
+            catalog, str(source), fetch_pubchem=False,
+            use_local_ai=False, progress=log,
+        )
+        second_path = Path(second["saved"]["path"])
+        assert second_path.exists() and second_path.read_bytes() == second["workbook"]
+        assert second_path != first_result_path
+        assert not first_result_path.exists() and not historical.exists()
+        assert personal_file.read_bytes() == b"personal: keep"
+        assert second["saved"]["cleanup_removed"] == 2, second["saved"]
+        import json
+        manifest = backend.RESULTS_DIR / "run_manifest.jsonl"
+        manifest_lines = [json.loads(x) for x in manifest.read_text(encoding="utf-8").splitlines()]
+        assert len(manifest_lines) == 1
+        assert manifest_lines[0]["file_name"] == second_path.name
+    print("PASS: portable workspace, newest-only desktop Excel, three-sheet report")
 
 
 if __name__ == "__main__":
