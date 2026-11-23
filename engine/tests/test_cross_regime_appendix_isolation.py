@@ -101,5 +101,39 @@ class AppendixFailureIsolationTest(unittest.TestCase):
         self.assertTrue((combined["approval_status"] == "CANDIDATE_REVIEW_REQUIRED").all())
 
 
+class ApprovedRuleCoverageTest(unittest.TestCase):
+    """An API candidate repeating an approved item must not override its result."""
+
+    @staticmethod
+    def _rule(source_kind, notice, regime="ACCIDENT_PREPAREDNESS"):
+        return pd.DataFrame([{
+            "regime": regime, "rule_id": f"{source_kind}-1", "designation_id": "ITEM-009",
+            "substance_name": "염화비닐", "direct_cas": "75-01-4",
+            "concentration_threshold_pct": 0.1, "concentration_operator": "이상",
+            "source_reference": notice, "source_text": "염화비닐 0.1% 이상",
+        }])
+
+    def _screen(self, candidate_notice):
+        inventory = pd.DataFrame([{
+            "material_id": "V1", "chemical_name": "Vinyl chloride",
+            "cas": "75-01-4", "concentration_pct": 0.05,
+        }])
+        summary, detail = cross_regime.screen_cross_regimes(
+            inventory, self._rule("APPROVED", "2026-2"),
+            self._rule("API", candidate_notice),
+        )
+        return summary.iloc[0]["ACCIDENT_PREPAREDNESS_decision"], detail
+
+    def test_same_notice_candidate_does_not_override_below_threshold(self):
+        decision, detail = self._screen("2026-2")
+        self.assertEqual(decision, "기준 미만·조건 비충족")
+        self.assertEqual(set(detail["rule_source_status"]), {"APPROVED"})
+
+    def test_newer_notice_candidate_is_still_held_for_review(self):
+        decision, detail = self._screen("2026-9")
+        self.assertEqual(decision, "해당 후보·검토 필요")
+        self.assertIn("API_CANDIDATE", set(detail["rule_source_status"]))
+
+
 if __name__ == "__main__":
     unittest.main()

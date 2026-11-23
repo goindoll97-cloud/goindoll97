@@ -385,6 +385,24 @@ def _approved_simple_decision(rule: pd.Series, item: pd.Series) -> tuple[str, st
     return "규제 해당", "승인 규칙의 직접 CAS와 구조화된 수치조건이 일치합니다."
 
 
+def _coverage_key(regime: object, cas: str, reference: object) -> tuple[str, str, str]:
+    regime = clean(regime)
+    if regime in {"RESTRICTED", "PROHIBITED"} or regime.startswith("RESTRICTED_PROHIBITED"):
+        regime = "RESTRICTED_PROHIBITED"
+    return regime, cas, clean(reference)
+
+
+def _approved_coverage(approved_rules: pd.DataFrame | None) -> set[tuple[str, str, str]]:
+    """(regime, CAS, notice) combinations that an approved rule already evaluates."""
+    if approved_rules is None or approved_rules.empty:
+        return set()
+    return {
+        _coverage_key(rule.get("regime"), cas, rule.get("source_reference"))
+        for _, rule in approved_rules.iterrows()
+        for cas in split_values(rule.get("direct_cas"))
+    }
+
+
 def screen_cross_regimes(
     inventory: pd.DataFrame,
     approved_rules: pd.DataFrame,
@@ -392,6 +410,11 @@ def screen_cross_regimes(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     detail: list[dict] = []
     regime_columns = ["ACCIDENT_PREPAREDNESS", "RESTRICTED", "PROHIBITED"]
+    # An API candidate that only repeats an item the approved rules already
+    # evaluate for the same notice must not override that evaluation (e.g. an
+    # approved "below threshold" turning into an unverified "candidate hold").
+    # Candidates from a different/newer notice are still kept.
+    covered = _approved_coverage(approved_rules)
     for _, item in inventory.iterrows():
         cas = clean(item.get("cas"))
         material_id = clean(item.get("material_id"))
@@ -400,6 +423,10 @@ def screen_cross_regimes(
                 continue
             for _, rule in rules.iterrows():
                 if cas not in split_values(rule.get("direct_cas")):
+                    continue
+                if source_kind == "API_CANDIDATE" and _coverage_key(
+                    rule.get("regime"), cas, rule.get("source_reference")
+                ) in covered:
                     continue
                 regime = clean(rule.get("regime"))
                 if regime not in regime_columns:
