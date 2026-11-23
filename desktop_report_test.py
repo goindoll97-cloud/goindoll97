@@ -99,6 +99,9 @@ def main():
     # The visible report must not lose the non-match to the no-hit statuses
     # or the future-notice warning on a separate status column.
     real_none = sample_summary().loc[[2]].copy()
+    # Match desktop_backend.screen_inventory, which attaches this category
+    # status before computing the overall decision.
+    real_none["HUMAN_HAZARD_decision"] = real_none["final_decision"]
     real_none["overall_decision"] = real_none.apply(_overall, axis=1)
     display_none = build_desktop_plain_summary(
         real_none, pd.DataFrame(), pd.DataFrame(), "2026-5"
