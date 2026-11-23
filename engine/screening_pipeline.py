@@ -1,22 +1,42 @@
-"""Desktop-only, three-worksheet, reader-facing regulatory report.
+"""Shared screening pipeline and reader-facing result report.
 
-The Streamlit app and shared regulatory/trust-gate decision engine are not
-modified. Display labels are derived from the engine's verified outcomes,
+Both the Streamlit web app and the Windows desktop app call ``run_screening``,
+so the procedure, the four result labels and the three-worksheet Excel report
+are identical. Display labels are derived from the engine's verified outcomes,
 not from a future-law warning or an unverified AI suggestion.
 """
 from __future__ import annotations
 
-from copy import copy
 from io import BytesIO
 import math
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from company_engine import (
+    build_result_workbook,
+    prepare_company_inventory,
+    screen_company_inventory,
+)
+from cross_regime import add_regulatory_category_columns, screen_cross_regimes
+from local_llm import analyze_cases, build_llm_review_cases, merge_llm_audit
+from no_cas_scope import build_no_cas_scope_index, screen_no_cas_scopes, attach_no_cas_candidates
 from plain_report import build_plain_summary
 from scope_engine import clean
+from trust_gate import (
+    apply_trust_gate,
+    build_category_search_log,
+    build_legal_basis,
+    cross_rule_availability,
+)
+
+Progress = Callable[[str], None]
+AiProgress = Callable[[int, int], None]
+
+# Safety cap on how many "검토 필요" materials go to the local AI in one pass.
+AI_REVIEW_AUTO_CEILING = 40
 
 
 HAZARD = (
@@ -103,7 +123,9 @@ def _cross_positive(rows: pd.DataFrame) -> bool:
 def _label(row: pd.Series, cross_rows: pd.DataFrame) -> str:
     final = _value(row.get("final_decision"))
     overall = _value(row.get("overall_decision"))
-    if final == "규제 해당" or overall == "규제 해당" or _cross_positive(cross_rows):
+    rule_positive = _value(row.get("rule_based_decision")) == "승인 규칙상 해당"
+    if (final == "규제 해당" or overall == "규제 해당" or rule_positive
+            or _cross_positive(cross_rows)):
         return "규제 해당"
     # An unresolved, separately applicable regime cannot be overwritten by
     # a "below threshold" or a "no match" finding in another regime.
@@ -130,7 +152,7 @@ def _has_hint(draft_hints: pd.DataFrame | None, material_id: str, cas: str) -> b
     return False
 
 
-def build_desktop_plain_summary(
+def build_result_table(
     summary: pd.DataFrame, evidence: pd.DataFrame | None,
     cross_detail: pd.DataFrame | None, notice: str,
     draft_hints: pd.DataFrame | None = None,
@@ -218,7 +240,7 @@ def build_desktop_plain_summary(
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
-def desktop_guide() -> pd.DataFrame:
+def result_guide() -> pd.DataFrame:
     rows = [
         ("규제 해당", "승인 규칙에서 직접 CAS 또는 검증된 구조와 적용 기준을 충족하는 근거가 확인되었습니다. 법규 최신성·공식 적용 여부는 검증 상태와 법규버전을 반드시 확인하세요."),
         ("기준 미만", "규제 범위 및 기준값에 연결되지만 입력 함량이 적용 기준에 미달합니다. 다른 규제 후보가 미해결이면 보류로 표시됩니다."),
@@ -234,7 +256,7 @@ def desktop_guide() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["용어", "쉬운 설명"])
 
 
-def adapt_desktop_workbook(base_workbook: bytes, plain: pd.DataFrame) -> bytes:
+def adapt_result_workbook(base_workbook: bytes, plain: pd.DataFrame) -> bytes:
     """Keep original version metadata and guide styling; export only 3 tabs."""
     book = load_workbook(BytesIO(base_workbook))
     required = {"판정결과", "결과읽는법", "법규버전"}
@@ -250,7 +272,7 @@ def adapt_desktop_workbook(base_workbook: bytes, plain: pd.DataFrame) -> bytes:
     ws = book.create_sheet("판정결과", at)
     guide = book["결과읽는법"]
     guide.delete_rows(1, guide.max_row)
-    for row in [list(desktop_guide().columns), *desktop_guide().itertuples(index=False, name=None)]:
+    for row in [list(result_guide().columns), *result_guide().itertuples(index=False, name=None)]:
         guide.append(list(row))
 
     ws.append(list(plain.columns))
@@ -312,3 +334,203 @@ def adapt_desktop_workbook(base_workbook: bytes, plain: pd.DataFrame) -> bytes:
     output = BytesIO()
     book.save(output)
     return output.getvalue()
+
+
+
+# ---------------------------------------------------------------- pipeline
+
+def overall_decision(row: pd.Series) -> str:
+    cols = (
+        "HUMAN_HAZARD_decision",
+        "ACCIDENT_PREPAREDNESS_decision",
+        "RESTRICTED_decision",
+        "PROHIBITED_decision",
+    )
+    values = [str(row.get(col, "")) for col in cols]
+    if "규제 해당" in values:
+        return "규제 해당"
+    if any("해당 후보" in v for v in values):
+        return "규제 해당 후보"
+    # cross_regime uses "법규 데이터 확인 필요" for a CAS no-hit as well as
+    # missing coverage. A no-hit by itself is not an unresolved candidate.
+    # Coverage and currentness warnings remain in the trust gate; unverified
+    # structure and scope candidates are still explicitly held.
+    if any(v in {"추가정보 필요", "조건 검토 필요",
+                 "전문가 검토 필요", "물질정보 확인 실패", "정보 부족"} for v in values):
+        return "추가 확인 필요"
+    if str(row.get("HUMAN_HAZARD_decision", "")).strip() in {
+        "기준 미만", "확인 범위 내 비해당"
+    }:
+        return "확인 범위 내 비해당"
+    # Unknown/absent main-regime status must never become non-regulated.
+    return "추가 확인 필요"
+
+
+def normalize_inventory_ids(raw: pd.DataFrame) -> pd.DataFrame:
+    """Keep a supplied bare ID header (ID, inventory id ...) as material_id."""
+    if "material_id" in raw.columns:
+        return raw
+    for name in raw.columns:
+        if str(name).strip().lower() in {"id", "inventory id", "inventory_id"}:
+            return raw.rename(columns={name: "material_id"})
+    return raw
+
+
+def build_workbook(result: dict) -> bytes:
+    """Export exactly the three reader-facing worksheets."""
+    summary = result["summary"]
+    catalog = result["catalog"]
+    full_workbook = build_result_workbook(
+        summary,
+        result["evidence"],
+        result["enriched"],
+        result["pubchem_audit"],
+        result["review"],
+        catalog["api_status"],
+        catalog["notice"],
+        len(catalog["master"]),
+        cross_summary=summary[[
+            "material_id", "HUMAN_HAZARD_decision",
+            "ACCIDENT_PREPAREDNESS_decision", "RESTRICTED_decision",
+            "PROHIBITED_decision", "applicable_regulatory_categories",
+            "review_regulatory_categories", "overall_decision"
+        ]].copy(),
+        cross_detail=result["cross_detail"],
+        cross_api_status=catalog["cross_api_status"],
+        llm_audit=result["llm_audit"],
+        llm_status=catalog["ai_status"],
+        gate_log=result["gate_log"],
+        category_log=result["category_log"],
+        legal_basis=result["legal_basis"],
+        no_cas_candidates=result["no_cas_candidates"],
+        detailed=False,
+    )
+    return adapt_result_workbook(full_workbook, result["plain"])
+
+
+def run_screening(
+    raw: pd.DataFrame, catalog: dict, *, fetch_pubchem: bool, use_local_ai: bool,
+    progress: Progress = lambda message: None,
+    ai_progress: AiProgress | None = None,
+    ai_ceiling: int = AI_REVIEW_AUTO_CEILING,
+) -> dict:
+    """Run the complete screening procedure and build the result workbook.
+
+    ``catalog`` holds master, notice, salt_rules, extended, cross_approved,
+    api_status, cross_candidates, cross_api_status and ai_status.
+    """
+    raw = normalize_inventory_ids(raw)
+    progress(f"{len(raw):,}개 물질의 CAS와 구조정보를 정리하는 중...")
+    enriched, pubchem_audit = prepare_company_inventory(raw, fetch_pubchem=fetch_pubchem)
+
+    progress("인체등유해성물질 규제 기준을 대조하는 중...")
+    summary, evidence, review = screen_company_inventory(
+        enriched, catalog["master"], catalog["salt_rules"],
+        catalog["notice"], extended_rules=catalog["extended"]
+    )
+    progress("사고대비·제한·금지물질 규제를 대조하는 중...")
+    cross_summary, cross_detail = screen_cross_regimes(
+        enriched, catalog["cross_approved"], catalog["cross_candidates"]
+    )
+    summary = summary.merge(cross_summary, on="material_id", how="left")
+    summary["HUMAN_HAZARD_decision"] = summary["final_decision"]
+    summary["overall_decision"] = summary.apply(overall_decision, axis=1)
+    summary = add_regulatory_category_columns(summary)
+
+    progress("규제 카테고리 검색기록과 법률근거를 검증하는 중...")
+    availability = cross_rule_availability(
+        catalog["cross_approved"], catalog["cross_candidates"],
+        catalog["cross_api_status"]
+    )
+    category_log = build_category_search_log(
+        summary, cross_detail, availability, catalog["notice"], len(catalog["master"])
+    )
+    legal_basis = build_legal_basis(evidence, cross_detail, catalog["notice"])
+    summary, gate_log = apply_trust_gate(
+        summary, evidence, cross_detail, category_log, legal_basis,
+        catalog["api_status"]
+    )
+
+    progress("CAS가 없는 포괄 규제범위 후보를 검토하는 중...")
+    no_cas_index = build_no_cas_scope_index(catalog["master"], catalog["notice"])
+    no_cas_candidates = screen_no_cas_scopes(enriched, no_cas_index)
+    summary = attach_no_cas_candidates(summary, no_cas_candidates)
+
+    summary_before_llm = summary.copy()
+    llm_cases: list = []
+    llm_audit = pd.DataFrame()
+    if use_local_ai:
+        if not catalog["ai_status"].get("ready"):
+            raise RuntimeError("로컬 AI가 연결되지 않았습니다. AI를 OFF로 설정하세요.")
+        llm_cases = build_llm_review_cases(summary, cross_detail, evidence)
+        max_cases = min(len(llm_cases), ai_ceiling)
+        progress(f"로컬 AI가 검토 필요 사례 {max_cases}건을 분석하는 중...")
+        llm_audit = analyze_cases(
+            llm_cases, max_cases=max_cases,
+            on_progress=ai_progress or (
+                lambda done, total: progress(f"로컬 AI 분석 중: {done}/{total}건")
+            ),
+        )
+    summary = merge_llm_audit(summary, llm_audit)
+
+    result = {
+        "catalog": catalog,
+        "summary": summary,
+        "summary_before_llm": summary_before_llm,
+        "evidence": evidence,
+        "review": review,
+        "enriched": enriched,
+        "pubchem_audit": pubchem_audit,
+        "cross_detail": cross_detail,
+        "category_log": category_log,
+        "gate_log": gate_log,
+        "legal_basis": legal_basis,
+        "no_cas_candidates": no_cas_candidates,
+        "llm_cases": llm_cases,
+        "llm_audit": llm_audit,
+        "plain": build_result_table(summary, evidence, cross_detail, catalog["notice"]),
+    }
+    progress("판정 결과 Excel 파일을 생성하는 중...")
+    result["workbook"] = build_workbook(result)
+    return result
+
+
+def rerun_ai(
+    result: dict, progress: Progress = lambda message: None,
+    ai_progress: AiProgress | None = None,
+) -> dict:
+    """Retry only AI cases that have no validated output, then rebuild the report."""
+    catalog = result["catalog"]
+    if not catalog["ai_status"].get("ready"):
+        raise RuntimeError("로컬 AI를 사용할 수 없습니다.")
+    done_ids = set()
+    audit = result["llm_audit"]
+    if not audit.empty and {"case_id", "llm_status"}.issubset(audit.columns):
+        done_ids = set(audit.loc[
+            audit["llm_status"].astype(str).eq("VALIDATED_OUTPUT"), "case_id"
+        ].astype(str))
+    remaining = [
+        case for case in result["llm_cases"]
+        if str(case.get("case_id")) not in done_ids
+    ]
+    if not remaining:
+        return result
+
+    updated_audit = analyze_cases(
+        remaining, max_cases=len(remaining),
+        on_progress=ai_progress or (
+            lambda done, total: progress(f"AI 보류·오류 사례 재검토 중: {done}/{total}건")
+        ),
+    )
+    combined = pd.concat([audit, updated_audit], ignore_index=True)
+    if "case_id" in combined.columns:
+        combined = combined.drop_duplicates("case_id", keep="last").reset_index(drop=True)
+
+    result["llm_audit"] = combined
+    result["summary"] = merge_llm_audit(result["summary_before_llm"], combined)
+    result["plain"] = build_result_table(
+        result["summary"], result["evidence"], result["cross_detail"], catalog["notice"]
+    )
+    progress("재검토 결과 Excel 파일을 생성하는 중...")
+    result["workbook"] = build_workbook(result)
+    return result

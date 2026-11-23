@@ -6,7 +6,8 @@ on:
     paths:
       - "desktop_app.py"
       - "desktop_backend.py"
-      - "desktop_report.py"
+      - "engine/screening_pipeline.py"
+      - "app.py"
       - "desktop_report_test.py"
       - "desktop_results.py"
       - "desktop_results_test.py"
@@ -54,7 +55,7 @@ jobs:
         run: python -m pip install -r requirements-desktop.txt
 
       - name: Check Python syntax
-        run: python -m py_compile desktop_app.py desktop_backend.py desktop_report.py desktop_report_test.py desktop_results.py desktop_results_test.py desktop_smoke_test.py desktop_ui_smoke_test.py desktop_regression_test.py engine/regulatory_api.py engine/trust_gate.py engine/plain_report.py
+        run: python -m py_compile desktop_app.py desktop_backend.py engine/screening_pipeline.py desktop_report_test.py desktop_results.py desktop_results_test.py desktop_smoke_test.py desktop_ui_smoke_test.py desktop_regression_test.py engine/regulatory_api.py engine/trust_gate.py engine/plain_report.py
 
       - name: Qt ON/OFF switch widget smoke test
         run: python desktop_ui_smoke_test.py

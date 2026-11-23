@@ -16,67 +16,32 @@ import streamlit as st
 
 from company_engine import (
     DATA_DIR,
-    build_result_workbook,
     korean_summary,
     load_approved_master,
     load_promoted_salt_rules,
-    prepare_company_inventory,
     read_inventory,
-    screen_company_inventory,
 )
 from cross_regime import (
     PENDING_DIR as CROSS_REGIME_PENDING_DIR,
     REGIME_DECISION_COLUMNS,
-    add_regulatory_category_columns,
     fetch_cross_regime_candidates,
     load_approved_cross_regime_rules,
-    screen_cross_regimes,
 )
 from regulatory_api import check_latest_notice, compare_with_master, download_notice_candidate
-from local_llm import (
-    analyze_cases,
-    build_llm_review_cases,
-    get_local_llm_status,
-    merge_llm_audit,
-)
+from local_llm import get_local_llm_status
 from scope_engine import load_extended_scope_rules
 from trust_gate import (
     CATEGORY_LOG_KO,
     GATE_LOG_KO,
     LEGAL_BASIS_KO,
-    apply_trust_gate,
-    build_category_search_log,
-    build_legal_basis,
-    cross_rule_availability,
 )
-from plain_report import build_decision_policy, build_plain_summary, build_reader_guide
 from result_store import list_saved_results, read_saved_result, save_result_workbook
-from structural_rule_drafting import (
-    build_draft_review_hints,
-    draft_and_cache,
-    extract_no_cas_cross_regime_cases,
-    extract_no_cas_master_cases,
+from screening_pipeline import (
+    AI_REVIEW_AUTO_CEILING,
+    result_guide,
+    rerun_ai,
+    run_screening,
 )
-from no_cas_scope import build_no_cas_scope_index, screen_no_cas_scopes, attach_no_cas_candidates
-
-STRUCTURAL_DRAFT_CACHE = DATA_DIR / "pending_updates" / "structural_rule_drafts"
-
-# Safety cap on how many "검토 필요" materials get sent to the local AI in one
-# automatic pass. This is not a tuned optimum -- it exists purely so a large
-# inventory can't silently turn into an hours-long run. When the actual
-# review count exceeds this, the UI offers a follow-up button to process the
-# remainder rather than making the person guess a number before running.
-AI_REVIEW_AUTO_CEILING = 40
-
-# The notice-wide no-CAS scan (structural_rule_drafting) can be on the order
-# of 100+ sequential local-LLM calls the first time. By default it tries to
-# finish everything in one run -- draft_and_cache saves after every single
-# case, so if a run is interrupted (browser disconnect, machine sleep, a
-# stuck call), nothing already drafted is lost and the next click picks up
-# exactly where it left off, without needing repeated manual re-runs for a
-# healthy machine that would otherwise finish in one pass.
-STRUCTURAL_DRAFT_BATCH_PER_RUN = 300
-
 
 
 st.set_page_config(
@@ -459,12 +424,6 @@ with right:
         help="규칙 판정을 먼저 완료한 뒤 구조범위나 복잡한 조건 해석이 필요한 보류 사례만 "
         "AI로 검토합니다. 확정 물질과 단순 입력 누락은 AI에 보내지 않습니다.",
     )
-    detailed_export = st.toggle(
-        "결과 파일에 상세 감사자료 포함",
-        value=False,
-        help="AI 검토기록과 CAS 없는 범위 후보는 항상 저장됩니다. 이 옵션을 켜면 "
-        "게이트·검색기록·물질식별·PubChem 기록까지 추가합니다.",
-    )
     st.caption(
         "먼저 전체 물질을 규칙으로 빠르게 판정하고, AI가 도움을 줄 수 있는 어려운 보류 "
         f"사례만 자동 선별합니다. 한 번에 최대 {AI_REVIEW_AUTO_CEILING}건을 처리합니다."
@@ -486,177 +445,38 @@ if run:
             if raw_inventory.empty:
                 raise ValueError("업로드한 인벤토리에 물질 행이 없습니다.")
             st.write(f"인벤토리 {len(raw_inventory):,}개 행을 읽었습니다.")
-            enriched, pubchem_audit = prepare_company_inventory(raw_inventory, fetch_pubchem=fetch_pubchem)
-            st.write("CAS와 구조정보를 정리했습니다.")
-            summary, evidence, review = screen_company_inventory(
-                enriched, master, salt_rules, master_notice, extended_rules=extended_rules
-            )
-            cross_summary, cross_detail = screen_cross_regimes(
-                enriched, cross_approved, cross_candidates
-            )
-            summary = summary.merge(cross_summary, on="material_id", how="left")
-            summary["HUMAN_HAZARD_decision"] = summary["final_decision"]
-            regime_cols = [
-                "HUMAN_HAZARD_decision",
-                "ACCIDENT_PREPAREDNESS_decision",
-                "RESTRICTED_decision",
-                "PROHIBITED_decision",
-            ]
-            def overall(row):
-                values = [str(row.get(col, "")) for col in regime_cols]
-                if "규제 해당" in values:
-                    return "규제 해당"
-                if any("해당 후보" in value for value in values):
-                    return "규제 해당 후보"
-                if any(value in {"추가정보 필요", "조건 검토 필요", "법규 데이터 확인 필요"} for value in values):
-                    return "추가 확인 필요"
-                if any(value in {"전문가 검토 필요", "물질정보 확인 실패", "정보 부족"} for value in values):
-                    return "추가 확인 필요"
-                return "확인 범위 내 비해당"
-            summary["overall_decision"] = summary.apply(overall, axis=1)
-            summary = add_regulatory_category_columns(summary)
 
-            st.write("다섯 규제 카테고리의 CAS 1차 검색기록을 물질별로 기록하고 있습니다.")
-            availability = cross_rule_availability(
-                cross_approved, cross_candidates, cross_api_status
-            )
-            category_log = build_category_search_log(
-                summary, cross_detail, availability, master_notice, len(master)
-            )
-            legal_basis = build_legal_basis(evidence, cross_detail, master_notice)
-            st.write("물질별 법률근거를 검증하고 자동확정·보류 게이트를 적용하고 있습니다.")
-            summary, gate_log = apply_trust_gate(
-                summary, evidence, cross_detail, category_log, legal_basis, api_status
-            )
-            st.write("법률근거 검증과 자동확정·보류 게이트 적용을 완료했습니다.")
-
-            no_cas_index = build_no_cas_scope_index(master, master_notice)
-            no_cas_candidates = screen_no_cas_scopes(enriched, no_cas_index)
-            summary = attach_no_cas_candidates(summary, no_cas_candidates)
-            if not no_cas_candidates.empty:
-                st.write(
-                    f"CAS 없는 총칭·혼합물·반응생성물 규정 후보 "
-                    f"{len(no_cas_candidates):,}건을 찾아 AI·전문가 검토 대상으로 연결했습니다."
-                )
-
+            _report_llm_progress = None
             if use_local_ai:
-                llm_cases = build_llm_review_cases(summary, cross_detail, evidence)
-                initial_cap = min(len(llm_cases), AI_REVIEW_AUTO_CEILING)
                 llm_progress_bar = st.progress(0.0)
                 llm_progress_text = st.empty()
-                llm_progress_text.write(
-                    f"로컬 AI가 검토 필요 사례(최대 {initial_cap}건)의 법규 범위와 조건을 "
-                    "구조화하고 있습니다..."
-                )
 
                 def _report_llm_progress(done: int, total: int) -> None:
                     llm_progress_bar.progress(done / total if total else 1.0)
                     llm_progress_text.write(f"검토 필요 사례 해석 중: {done}/{total}건")
 
-                llm_audit = analyze_cases(
-                    llm_cases, max_cases=initial_cap, on_progress=_report_llm_progress
-                )
-                llm_progress_bar.progress(1.0)
-                if len(llm_cases) > AI_REVIEW_AUTO_CEILING:
-                    st.write(
-                        f"검토 필요 물질이 {len(llm_cases)}건이라 안전 상한 "
-                        f"{AI_REVIEW_AUTO_CEILING}건까지만 우선 처리했습니다. "
-                        "나머지는 결과 화면의 버튼으로 이어서 처리할 수 있습니다."
-                    )
-            else:
-                llm_cases = []
-                llm_audit = pd.DataFrame()
-            summary_before_llm = summary.copy()
-            summary = merge_llm_audit(summary, llm_audit)
-            st.write("다섯 규제체계와 인체급성·인체만성·생태유해성 기준을 각각 적용했습니다.")
-            plain = build_plain_summary(summary, evidence, cross_detail, master_notice)
-
-            draft_hints = pd.DataFrame()
-            # Notice-wide structural rule drafting is an administrative rule-
-            # maintenance task, not a per-inventory screening task.  Keep it
-            # out of the normal run so hundreds of unrelated LLM calls are not
-            # triggered whenever a company file is screened.
-            run_notice_wide_drafting = False
-            has_unmatched_material = bool((plain["판정결과"] != "규제 해당").any()) if not plain.empty else False
-            if use_local_ai and not has_unmatched_material:
-                st.write(
-                    "모든 물질의 판정이 확정되어 AI 검토를 건너뜁니다."
-                )
-            elif use_local_ai and run_notice_wide_drafting:
-                no_cas_cases = extract_no_cas_master_cases(master, master_notice)
-                no_cas_cases += extract_no_cas_cross_regime_cases(cross_approved)
-                no_cas_cases += extract_no_cas_cross_regime_cases(cross_candidates)
-                draft_cache_path = STRUCTURAL_DRAFT_CACHE / f"all_categories_{master_notice}.csv"
-                progress_bar = st.progress(0.0)
-                progress_text = st.empty()
-                progress_text.write(
-                    f"CAS 없이 화합물군·구조범위로 지정된 법규 항목 {len(no_cas_cases)}건을 "
-                    "AI로 검토하고 있습니다 (처음 한 번만 시간이 걸리며, 중간에 멈춰도 "
-                    "이미 처리한 항목은 저장되어 다음 실행부터 즉시 재사용됩니다)..."
-                )
-
-                def _report_progress(done: int, total: int, row: dict) -> None:
-                    progress_bar.progress(done / total if total else 1.0)
-                    progress_text.write(
-                        f"AI 구조범위 초안 작성 중: {done}/{total}건 "
-                        f"(지정번호 {row.get('designation_id') or '-'}) — "
-                        "저장된 결과는 지금 멈춰도 남습니다."
-                    )
-
-                try:
-                    draft_audit = draft_and_cache(
-                        no_cas_cases,
-                        draft_cache_path,
-                        max_cases=STRUCTURAL_DRAFT_BATCH_PER_RUN,
-                        on_progress=_report_progress,
-                    )
-                    draft_hints = build_draft_review_hints(plain, enriched, draft_audit)
-                    progress_bar.progress(1.0)
-                    remaining = len({c["case_id"] for c in no_cas_cases}) - len(draft_audit)
-                    if remaining > 0:
-                        progress_text.write(
-                            f"이번 실행에서 처리한 만큼 저장했습니다. 아직 {remaining}건이 "
-                            "남아 있어 '판정 실행'을 몇 번 더 누르시면 이어서 처리되고, "
-                            "다 끝난 항목부터는 다음 실행부터 즉시 재사용됩니다."
-                        )
-                    else:
-                        progress_text.write("AI 구조범위 초안 검토를 전부 완료했습니다.")
-                except Exception as exc:
-                    st.caption(f"구조범위 AI 초안 검토를 건너뜁니다: {type(exc).__name__}")
-
-            workbook = build_result_workbook(
-                summary,
-                evidence,
-                enriched,
-                pubchem_audit,
-                review,
-                api_status,
-                master_notice,
-                len(master),
-                cross_summary=summary[[
-                    "material_id",
-                    "HUMAN_HAZARD_decision",
-                    "ACCIDENT_PREPAREDNESS_decision",
-                    "RESTRICTED_decision",
-                    "PROHIBITED_decision",
-                    "applicable_regulatory_categories",
-                    "review_regulatory_categories",
-                    "overall_decision",
-                ]].copy(),
-                cross_detail=cross_detail,
-                cross_api_status=cross_api_status,
-                llm_audit=llm_audit,
-                llm_status=local_ai_status,
-                gate_log=gate_log,
-                category_log=category_log,
-                legal_basis=legal_basis,
-                draft_hints=draft_hints,
-                no_cas_candidates=no_cas_candidates,
-                detailed=bool(detailed_export),
+            catalog = {
+                "master": master, "notice": master_notice, "salt_rules": salt_rules,
+                "extended": extended_rules, "cross_approved": cross_approved,
+                "api_status": api_status, "cross_candidates": cross_candidates,
+                "cross_api_status": cross_api_status, "ai_status": local_ai_status,
+            }
+            result = run_screening(
+                raw_inventory, catalog, fetch_pubchem=fetch_pubchem,
+                use_local_ai=use_local_ai, progress=st.write,
+                ai_progress=_report_llm_progress, ai_ceiling=AI_REVIEW_AUTO_CEILING,
             )
-
+            if use_local_ai:
+                llm_progress_bar.progress(1.0)
+            if len(result["llm_cases"]) > AI_REVIEW_AUTO_CEILING:
+                st.write(
+                    f"검토 필요 물질이 {len(result['llm_cases'])}건이라 안전 상한 "
+                    f"{AI_REVIEW_AUTO_CEILING}건까지만 우선 처리했습니다. "
+                    "나머지는 결과 화면의 버튼으로 이어서 처리할 수 있습니다."
+                )
+            summary = result["summary"]
             saved = save_result_workbook(
-                workbook,
+                result["workbook"],
                 master_notice,
                 len(summary),
                 api_status=api_status,
@@ -665,28 +485,13 @@ if run:
                     for key, value in summary["gate_decision"].value_counts().items()
                 },
             )
-            st.session_state["company_screen_result"] = {
-                "summary": summary,
-                "summary_before_llm": summary_before_llm,
-                "evidence": evidence,
-                "review": review,
-                "enriched": enriched,
-                "pubchem_audit": pubchem_audit,
-                "workbook": workbook,
-                "cross_detail": cross_detail,
-                "llm_audit": llm_audit,
-                "llm_cases": llm_cases,
-                "gate_log": gate_log,
-                "category_log": category_log,
-                "legal_basis": legal_basis,
-                "plain": plain,
-                "draft_hints": draft_hints,
-                "no_cas_candidates": no_cas_candidates,
+            result.update({
                 "saved_file": saved,
                 "api_status": api_status,
                 "master_notice": master_notice,
                 "master_len": len(master),
-            }
+            })
+            st.session_state["company_screen_result"] = result
             st.write(f"결과 파일을 보존 폴더에 저장했습니다: {saved['file_name']}")
             status.update(label="규제 판정이 완료되었습니다.", state="complete", expanded=False)
     except Exception as exc:
@@ -723,19 +528,18 @@ if result:
     st.subheader("2. 판정 결과")
     with st.expander("결과 읽는 방법과 용어 설명"):
         st.markdown(
-            "**안전 원칙:** 공식 기준으로 확실히 입증된 경우만 자동확정합니다. "
+            "**안전 원칙:** 공식 기준으로 확실히 입증된 경우만 규제 해당으로 표시합니다. "
             "AI는 관련 후보와 확인할 내용을 정리할 뿐, 최종 규제 해당·비해당을 결정하지 않습니다."
         )
-        st.dataframe(build_decision_policy(), hide_index=True, width="stretch")
-        st.markdown("**결과파일에 나오는 주요 용어**")
-        st.dataframe(build_reader_guide(), hide_index=True, width="stretch")
-    counts = summary["gate_decision"].value_counts()
-    held = int(sum(value for key, value in counts.items() if str(key).startswith("보류") or "보류" in str(key)))
+        st.dataframe(result_guide(), hide_index=True, width="stretch")
+    plain = result.get("plain", pd.DataFrame())
+    counts = plain["판정결과"].value_counts()
     metrics = [
-        ("전체", len(summary)),
-        ("규제 해당(자동 확정)", int(counts.get("규제 해당(자동 확정)", 0))),
-        ("보류", held),
-        ("확인 범위 내 비해당", int(counts.get("확인 범위 내 비해당", 0))),
+        ("전체", len(plain)),
+        ("규제 해당", int(counts.get("규제 해당", 0))),
+        ("기준 미만", int(counts.get("기준 미만", 0))),
+        ("비해당", int(counts.get("비해당", 0))),
+        ("보류", int(counts.get("보류(추가 확인 필요)", 0))),
     ]
     cols = st.columns(len(metrics))
     for col, (label, value) in zip(cols, metrics):
@@ -748,15 +552,16 @@ if result:
     ):
         col.metric(label, f"{int(summary[decision_column].eq('규제 해당').sum()):,}개")
 
-
-    plain = result.get("plain", pd.DataFrame())
     decision_filter = st.multiselect(
         "결과 필터",
         options=plain["판정결과"].dropna().unique().tolist(),
         default=plain["판정결과"].dropna().unique().tolist(),
     )
+    shown = plain[plain["판정결과"].isin(decision_filter)].copy()
+    for threshold_col in ("법규 인체급성 기준(%)", "법규 인체만성 기준(%)", "법규 생태 기준(%)"):
+        shown[threshold_col] = pd.to_numeric(shown[threshold_col], errors="coerce")
     st.dataframe(
-        plain[plain["판정결과"].isin(decision_filter)],
+        shown,
         hide_index=True,
         width="stretch",
         height=min(620, 95 + 42 * max(1, len(plain))),
@@ -767,8 +572,9 @@ if result:
         },
     )
     st.caption(
-        "「규제 해당」은 공식 근거가 확인된 경우에만 표시됩니다. 「보류」는 비규제를 뜻하지 않으며, "
-        "판정에 필요한 근거가 아직 확보되지 않았다는 의미입니다."
+        "「규제 해당」은 저장된 승인 규칙과 확인된 근거를 기준으로 한 표시이며 최종 법적 확정이 아닙니다. "
+        "「보류」는 비규제를 뜻하지 않으며, 판정에 필요한 근거가 아직 확보되지 않았다는 의미입니다. "
+        "법규 최신성 경고는 판정결과를 바꾸지 않고 검증 상태·추가 확인사항에 표시됩니다."
     )
 
     with st.expander("판정 상세 (매칭·게이트·AI 검토)"):
@@ -958,68 +764,20 @@ if result:
                     retry_text.write(f"AI 재검토 중: {done}/{total}건")
 
                 with loading_overlay("로딩 중", "오류·미처리 물질을 AI가 다시 검토하고 있습니다."):
-                    extra_audit = analyze_cases(
-                        remaining_cases,
-                        max_cases=len(remaining_cases),
-                        on_progress=_report_retry,
-                    )
-                    combined_audit = pd.concat(
-                        [result["llm_audit"], extra_audit], ignore_index=True
-                    )
-                    combined_audit = combined_audit.drop_duplicates(
-                        subset=["case_id"], keep="last"
-                    ).reset_index(drop=True)
-                    updated_summary = merge_llm_audit(
-                        result["summary_before_llm"], combined_audit
-                    )
-                    updated_workbook = build_result_workbook(
-                        updated_summary,
-                        result["evidence"],
-                        result["enriched"],
-                        result["pubchem_audit"],
-                        result["review"],
-                        result["api_status"],
+                    # Re-check the AI connection now; it may have changed since the run.
+                    result["catalog"] = {**result["catalog"], "ai_status": get_local_llm_status()}
+                    result = rerun_ai(result, ai_progress=_report_retry)
+                    saved_again = save_result_workbook(
+                        result["workbook"],
                         result["master_notice"],
-                        result["master_len"],
-                        cross_summary=updated_summary[[
-                            "material_id",
-                            "HUMAN_HAZARD_decision",
-                            "ACCIDENT_PREPAREDNESS_decision",
-                            "RESTRICTED_decision",
-                            "PROHIBITED_decision",
-                            "applicable_regulatory_categories",
-                            "review_regulatory_categories",
-                            "overall_decision",
-                        ]].copy(),
-                        cross_detail=result["cross_detail"],
-                        llm_audit=combined_audit,
-                        llm_status=get_local_llm_status(),
-                        gate_log=result["gate_log"],
-                        category_log=result["category_log"],
-                        legal_basis=result["legal_basis"],
-                        no_cas_candidates=result.get("no_cas_candidates"),
-                        detailed=detailed_export,
-                    )
-                    updated_saved = save_result_workbook(
-                        updated_workbook,
-                        result["master_notice"],
-                        len(updated_summary),
+                        len(result["summary"]),
                         api_status=result["api_status"],
                         gate_counts={
                             key: int(value)
-                            for key, value in updated_summary["gate_decision"].value_counts().items()
+                            for key, value in result["summary"]["gate_decision"].value_counts().items()
                         },
                     )
-                    result["summary"] = updated_summary
-                    result["llm_audit"] = combined_audit
-                    result["workbook"] = updated_workbook
-                    result["plain"] = build_plain_summary(
-                        updated_summary,
-                        result["evidence"],
-                        result["cross_detail"],
-                        result["master_notice"],
-                    )
-                    result["saved_file"] = updated_saved
+                    result["saved_file"] = saved_again
                     st.session_state["company_screen_result"] = result
                     retry_bar.progress(1.0)
                 st.rerun()
