@@ -217,7 +217,12 @@ def _overall(row: pd.Series) -> str:
         return "규제 해당"
     if any("해당 후보" in v for v in values):
         return "규제 해당 후보"
-    if any(v in {"추가정보 필요", "조건 검토 필요", "법규 데이터 확인 필요",
+    # cross_regime uses "법규 데이터 확인 필요" for a CAS no-hit as well as
+    # missing coverage. A no-hit by itself is not an unresolved candidate.
+    # Preserve the human-hazard engine's genuine below-threshold/non-match
+    # outcomes. Coverage and currentness warnings remain in the trust gate;
+    # unverified structure and scope candidates are still explicitly held.
+    if any(v in {"추가정보 필요", "조건 검토 필요",
                  "전문가 검토 필요", "물질정보 확인 실패", "정보 부족"} for v in values):
         return "추가 확인 필요"
     return "확인 범위 내 비해당"
