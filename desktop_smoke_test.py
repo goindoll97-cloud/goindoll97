@@ -47,21 +47,16 @@ def main():
         assert Path(result["saved"]["path"]).is_file()
         assert Path(result["saved"]["path"]).parent == backend.RESULTS_DIR
         assert result["workbook"][:2] == b"PK"
-        # Audit sheets are always included, including when running offline/AI OFF.
+        # Desktop exports only the three reader-facing worksheets.
         with ZipFile(BytesIO(result["workbook"])) as archive:
             workbook_xml = ElementTree.fromstring(archive.read("xl/workbook.xml"))
             ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
             sheet_names = {sheet.attrib["name"] for sheet in workbook_xml.iter(f"{ns}sheet")}
-            required = {
-                "판정결과", "상세판정요약", "신뢰게이트", "카테고리검색기록",
-                "법률근거", "규제근거", "물질식별", "PubChem조회기록",
-                "규제체계별판정", "타법규근거", "법규API상태",
-            }
-            assert required.issubset(sheet_names), (
-                f"Missing detailed audit sheets: {required - sheet_names}"
-            )
+            assert sheet_names == {"판정결과", "결과읽는법", "법규버전"}, sheet_names
+            assert list(result["plain"].columns)[0] == "인벤토리 ID"
+            assert set(result["plain"]["구조초안 힌트"]) == {"없음"}
         assert Path(result["saved"]["path"]).read_bytes() == result["workbook"]
-    print("PASS: portable workspace, offline/AI-OFF screening, full audit Excel always exported")
+    print("PASS: portable workspace, offline/AI-OFF screening, three-sheet Excel exported")
 
 
 if __name__ == "__main__":
