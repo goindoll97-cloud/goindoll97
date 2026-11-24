@@ -557,9 +557,7 @@ if result:
         options=plain["판정결과"].dropna().unique().tolist(),
         default=plain["판정결과"].dropna().unique().tolist(),
     )
-    shown = plain[plain["판정결과"].isin(decision_filter)].copy()
-    for threshold_col in ("법규 인체급성 기준(%)", "법규 인체만성 기준(%)", "법규 생태 기준(%)"):
-        shown[threshold_col] = pd.to_numeric(shown[threshold_col], errors="coerce")
+    shown = plain[plain["판정결과"].isin(decision_filter)]
     st.dataframe(
         shown,
         hide_index=True,
@@ -574,7 +572,7 @@ if result:
     st.caption(
         "「규제 해당」은 저장된 승인 규칙과 확인된 근거를 기준으로 한 표시이며 최종 법적 확정이 아닙니다. "
         "「보류」는 비규제를 뜻하지 않으며, 판정에 필요한 근거가 아직 확보되지 않았다는 의미입니다. "
-        "법규 최신성 경고는 판정결과를 바꾸지 않고 검증 상태·추가 확인사항에 표시됩니다."
+        "법규 최신성 경고는 판정결과를 바꾸지 않고 추가 확인사항에 표시됩니다."
     )
 
     with st.expander("판정 상세 (매칭·게이트·AI 검토)"):

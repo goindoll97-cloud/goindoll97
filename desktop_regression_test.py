@@ -59,19 +59,19 @@ def main():
             row = plain.loc[cas]
             assert row["판정결과"] == "규제 해당", (cas, row.to_dict())
             assert category in row["규제 카테고리"], (cas, row.to_dict())
-            assert row["검증 상태"].startswith("보류"), (cas, row.to_dict())
+            assert "2026-16" in row["추가 확인사항"], (cas, row.to_dict())
             assert "2026-12-19" in summary.loc[cas, "law_version_status"], cas
             assert row["법적 근거"] != "-", cas
         # Approved-rule positive held only by a scope candidate still reads positive.
         assert plain.loc["1310-73-2", "판정결과"] == "규제 해당", plain.loc["1310-73-2"].to_dict()
         invalid = plain.loc["000-00-0"]
         assert invalid["판정결과"] == "보류(추가 확인 필요)", invalid.to_dict()
-        assert "물질식별" in invalid["검증 상태"], invalid.to_dict()
+        assert "유효한 CAS" in invalid["판단근거"] or "물질식별" in invalid["추가 확인사항"], invalid.to_dict()
         assert not result["llm_audit"].shape[0]
         assert result["workbook"].startswith(b"PK")
         assert "인벤토리 ID" in plain.columns
-        assert "구조초안 힌트" in plain.columns
-        assert "법규 인체급성 기준(%)" in plain.columns
+        for removed in ("구조초안 힌트", "검증 상태", "법규 인체급성 기준(%)"):
+            assert removed not in plain.columns, removed
         assert "추가 확인사항" in plain.columns
     print("PASS: future notice, approved CAS positive evidence, audit separation, AI OFF")
 

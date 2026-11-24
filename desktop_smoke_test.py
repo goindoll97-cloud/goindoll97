@@ -57,7 +57,7 @@ def main():
             sheet_names = {sheet.attrib["name"] for sheet in workbook_xml.iter(f"{ns}sheet")}
             assert sheet_names == {"판정결과", "결과읽는법", "법규버전"}, sheet_names
             assert list(result["plain"].columns)[0] == "인벤토리 ID"
-            assert set(result["plain"]["구조초안 힌트"]) == {"없음"}
+            assert "구조초안 힌트" not in result["plain"].columns
         assert Path(result["saved"]["path"]).read_bytes() == result["workbook"]
         # A second completed screening must leave ONLY the newest program
         # result in workspace/results. No other user files are deleted.
