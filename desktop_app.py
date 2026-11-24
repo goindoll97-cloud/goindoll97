@@ -277,7 +277,7 @@ class DesktopWindow(QMainWindow):
         choose.clicked.connect(self.choose_file)
         self.example_button = QPushButton("작성예시파일")
         self.example_button.setToolTip(
-            "물질명, CAS번호, 함량 등을 작성할 수 있는 Excel 예시 양식을 저장합니다."
+            "물질명, CAS번호, 함량(%)만 작성하는 Excel 예시 양식을 저장합니다."
         )
         self.example_button.clicked.connect(self.save_entry_example)
         file_row.addWidget(label)
