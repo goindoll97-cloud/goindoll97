@@ -122,10 +122,7 @@ def main():
 
     summary = sample_summary()
     evidence = sample_evidence()
-    hints = pd.DataFrame([{"material_id": "H1", "cas": "71-43-2"}])
-    desktop = build_result_table(
-        summary, evidence, pd.DataFrame(), "2026-5", draft_hints=hints
-    )
+    desktop = build_result_table(summary, evidence, pd.DataFrame(), "2026-5")
     assert list(desktop.columns) == COLUMNS
     assert len(desktop) == 4
     rows = desktop.set_index("인벤토리 ID")
@@ -140,12 +137,10 @@ def main():
     ), rows.loc["P1", "규제 카테고리"]
     assert rows.loc["B1", "규제 카테고리"] == "해당 없음"
     assert rows.loc["N1", "규제 카테고리"] == "해당 없음"
-    assert rows.loc["H1", "구조초안 힌트"] == "발생함(검토 필요)"
-    assert rows.loc["P1", "구조초안 힌트"] == "없음"
     assert "인체급성유해성물질: 기준 25% 이상, 실제 함량 15% — 기준 미만" in rows.loc["P1", "판단근거"]
     assert "인체만성유해성물질: 기준 10% 이상, 실제 함량 15% — 규제 해당" in rows.loc["P1", "판단근거"]
     assert "생태유해성물질: 기준 5% 이상, 실제 함량 15% — 규제 해당" in rows.loc["P1", "판단근거"]
-    assert rows.loc["B1", "법규 인체급성 기준(%)"] == 10
+    assert "인체급성유해성물질: 기준 10% 이상" in rows.loc["B1", "판단근거"]
     assert rows.loc["B1", "인체급성 판정"] == "기준 미만"
     assert rows.loc["H1", "추가 확인사항"].startswith("확인하지 못한 사항:")
 

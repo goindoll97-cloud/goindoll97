@@ -44,12 +44,11 @@ HAZARD = (
     ("chronic", "인체만성유해성물질"),
     ("eco", "생태유해성물질"),
 )
+# Thresholds are written out in 판단근거; verification caveats are in 추가 확인사항.
 COLUMNS = [
     "인벤토리 ID", "물질명", "CAS번호", "함량(%)", "판정결과",
-    "규제 카테고리", "법규 인체급성 기준(%)", "인체급성 판정",
-    "법규 인체만성 기준(%)", "인체만성 판정", "법규 생태 기준(%)",
-    "생태 판정", "구조초안 힌트", "검증 상태", "판단근거",
-    "추가 확인사항", "법적 근거",
+    "규제 카테고리", "인체급성 판정", "인체만성 판정", "생태 판정",
+    "판단근거", "추가 확인사항", "법적 근거",
 ]
 STATUS_RANK = {"해당": 4, "함량 확인 필요": 3, "기준 미만": 2}
 RESULT_COLORS = {
@@ -138,24 +137,9 @@ def _label(row: pd.Series, cross_rows: pd.DataFrame) -> str:
     return "보류(추가 확인 필요)"
 
 
-def _has_hint(draft_hints: pd.DataFrame | None, material_id: str, cas: str) -> bool:
-    if draft_hints is None or draft_hints.empty:
-        return False
-    for column in ("material_id", "인벤토리 ID"):
-        if column in draft_hints.columns:
-            return bool(draft_hints[column].map(_value).eq(material_id).any())
-    for column in ("cas", "CAS번호"):
-        if column in draft_hints.columns and cas:
-            return bool(draft_hints[column].map(_value).eq(cas).any())
-    # Without a reliable row identifier, never attach a global draft to a
-    # specific inventory item.
-    return False
-
-
 def build_result_table(
     summary: pd.DataFrame, evidence: pd.DataFrame | None,
     cross_detail: pd.DataFrame | None, notice: str,
-    draft_hints: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     if summary is None or summary.empty:
         return pd.DataFrame(columns=COLUMNS)
@@ -224,33 +208,26 @@ def build_result_table(
             "함량(%)": concentration if math.isfinite(concentration) else None,
             "판정결과": decision,
             "규제 카테고리": categories,
-            "구조초안 힌트": (
-                "발생함(검토 필요)" if _has_hint(draft_hints, material_id, cas) else "없음"
-            ),
-            "검증 상태": _value(original.get("검증 상태")) or "-",
             "판단근거": explanation,
             "추가 확인사항": extra,
             "법적 근거": _value(original.get("법적 근거")) or "-",
         }
         for key, title in (("acute", "인체급성"), ("chronic", "인체만성"), ("eco", "생태")):
-            threshold, outcome = details[key]
-            row[f"법규 {title} 기준(%)"] = threshold
-            row[f"{title} 판정"] = outcome
+            row[f"{title} 판정"] = details[key][1]
         rows.append(row)
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
 def result_guide() -> pd.DataFrame:
     rows = [
-        ("규제 해당", "승인 규칙에서 직접 CAS 또는 검증된 구조와 적용 기준을 충족하는 근거가 확인되었습니다. 법규 최신성·공식 적용 여부는 검증 상태와 법규버전을 반드시 확인하세요."),
+        ("규제 해당", "승인 규칙에서 직접 CAS 또는 검증된 구조와 적용 기준을 충족하는 근거가 확인되었습니다. 법규 최신성·공식 적용 여부는 추가 확인사항과 법규버전을 반드시 확인하세요."),
         ("기준 미만", "규제 범위 및 기준값에 연결되지만 입력 함량이 적용 기준에 미달합니다. 다른 규제 후보가 미해결이면 보류로 표시됩니다."),
         ("비해당", "확인한 규제범위에서 해당 항목을 찾지 못했다는 뜻입니다. 국내 모든 법규에서 절대적 비규제임을 뜻하지 않습니다."),
         ("보류(추가 확인 필요)", "포괄 지정, 혼합물, 명시적 제외, 정보 부족, 확인되지 않은 규제 후보 등은 사람의 검토가 필요합니다."),
         ("인벤토리 ID", "입력 자료의 ID를 그대로 표시하여 원본 행과 판정 결과를 대조합니다."),
-        ("세 가지 유해성 판단", "인체급성·인체만성·생태유해성 기준과 실제 함량을 각각 표시합니다. '규칙 없음'은 이 앱에서 검증된 적용 기준을 찾지 못한 것으로, 법적 비규제를 보장하지 않습니다."),
+        ("세 가지 유해성 판단", "인체급성·인체만성·생태유해성 판정을 각각 표시하며 적용 기준(%)과 실제 함량은 판단근거에 적습니다. '규칙 없음'은 이 앱에서 검증된 적용 기준을 찾지 못한 것으로, 법적 비규제를 보장하지 않습니다."),
         ("규제 카테고리", "확인된 규제 해당 카테고리만 표시합니다. 기준 미만 및 확인 범위 내 비해당은 '해당 없음'으로 표시합니다."),
-        ("구조초안 힌트", "없음 또는 발생함(검토 필요). 미검증 AI 초안은 법적 확정 근거가 아니며, 실제로 생성/연결된 경우에만 발생함으로 표시됩니다."),
-        ("검증 상태 및 추가 확인사항", "법규 최신성·정확한 구조 및 다른 조건의 검증 필요 여부는 여기에서 확인하며, 판정결과를 일괄 보류로 바꾸지 않습니다."),
+        ("추가 확인사항", "법규 최신성·정확한 구조 및 다른 조건의 검증 필요 여부는 여기에서 확인하며, 판정결과를 일괄 보류로 바꾸지 않습니다."),
         ("법적 근거", "적용 고시의 고유번호나 관련 지정 근거를 표시합니다. 상세 적용은 공식 원문과 대조해야 합니다."),
     ]
     return pd.DataFrame(rows, columns=["용어", "쉬운 설명"])
@@ -286,10 +263,8 @@ def adapt_result_workbook(base_workbook: bytes, plain: pd.DataFrame) -> bytes:
     width = {
         "인벤토리 ID": 17, "물질명": 28, "CAS번호": 19, "함량(%)": 13,
         "판정결과": 24, "규제 카테고리": 34,
-        "법규 인체급성 기준(%)": 20, "인체급성 판정": 18,
-        "법규 인체만성 기준(%)": 20, "인체만성 판정": 18,
-        "법규 생태 기준(%)": 17, "생태 판정": 18, "구조초안 힌트": 22,
-        "검증 상태": 34, "판단근거": 85, "추가 확인사항": 65,
+        "인체급성 판정": 18, "인체만성 판정": 18, "생태 판정": 18,
+        "판단근거": 85, "추가 확인사항": 65,
         "법적 근거": 48,
     }
     for c in ws[1]:
@@ -314,8 +289,6 @@ def adapt_result_workbook(base_workbook: bytes, plain: pd.DataFrame) -> bytes:
         for col in (cas_col, id_col):
             ws.cell(row_num, col).number_format = "@"
         ws.cell(row_num, 4).number_format = "0.###"
-        for col in (7, 9, 11):
-            ws.cell(row_num, col).number_format = "0.###"
 
     guide.freeze_panes = "A2"
     guide.auto_filter.ref = guide.dimensions
