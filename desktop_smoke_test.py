@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+
+import pandas as pd
 from tempfile import TemporaryDirectory
 from xml.etree import ElementTree
 from zipfile import ZipFile
@@ -34,6 +36,7 @@ def main():
         assert list(parsed["chemical_name"]) == ["포름알데히드", "카페인"]
         assert list(parsed["cas"]) == ["50-00-0", "58-08-2"]
         assert list(parsed["concentration_pct"]) == [2, 1]
+        assert list(pd.read_excel(example, sheet_name="물질입력").columns) == ["물질명", "CAS번호", "함량(%)", "SMILES"]
         assert "smiles" in parsed.columns
         catalog = backend.initialize(online_law=False, progress=log)
         assert catalog["api_status"]["sync_status"] != "CURRENT"
